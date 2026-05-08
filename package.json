@@ -1,0 +1,57 @@
+{
+  "name": "@astra-spec/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for ASTRA (Agentic Schema for Transparent Research Analysis): parse, validate, and inspect ASTRA analysis specifications.",
+  "type": "module",
+  "license": "BSD-3-Clause",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "astra",
+    "research",
+    "reproducibility",
+    "schema",
+    "validation",
+    "linkml",
+    "scientific-computing"
+  ],
+  "homepage": "https://astra-spec.org/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LightconeResearch/astra-typescript"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

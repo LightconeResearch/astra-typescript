@@ -13,7 +13,6 @@ import {
   loadAstraSchema,
 } from "../schema/index.js";
 import {
-  deepClone,
   injectAnalysisIdsInPlace,
   injectUniverseIdsInPlace,
   loadYaml,
@@ -81,7 +80,7 @@ export async function validateAnalysisData(
 ): Promise<string[]> {
   const schema = await resolveSchema(opts);
   const { analysis } = compileFor(schema);
-  const prepared = deepClone(data);
+  const prepared = structuredClone(data);
   if (prepared.id === undefined) prepared.id = "root";
   injectAnalysisIdsInPlace(prepared);
   if (analysis(prepared)) return [];
@@ -94,7 +93,7 @@ export async function validateUniverseData(
 ): Promise<string[]> {
   const schema = await resolveSchema(opts);
   const { universe } = compileFor(schema);
-  const prepared = deepClone(data);
+  const prepared = structuredClone(data);
   injectUniverseIdsInPlace(prepared);
   if (universe(prepared)) return [];
   return (universe.errors ?? []).map(formatAjvError);

@@ -1,7 +1,14 @@
-// Narrative validation: anchor resolution, coverage warnings, and the
-// section-required-when-data-present rule.
+import { dirname } from "node:path";
 
-import { loadYaml, resolveAnalysisTree } from "../helpers.js";
+import {
+  type Dict,
+  asArray,
+  asDict,
+  getInputIds,
+  getOutputIds,
+  loadYaml,
+  resolveAnalysisTree,
+} from "../helpers.js";
 import { SemanticError } from "./semantic.js";
 
 const HREF_RE = /\[[^\]]*\]\(([^)\s]+)\)/g;
@@ -28,16 +35,6 @@ const COVERAGE_LABELS: Record<string, string> = {
 };
 
 const NARRATIVE_SECTIONS = ["summary", "findings", "methods", "inputs", "outputs"] as const;
-
-type Dict = Record<string, unknown>;
-
-function asDict(v: unknown): Dict | undefined {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Dict) : undefined;
-}
-
-function asArray(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : [];
-}
 
 export class NarrativeWarning {
   constructor(
@@ -105,14 +102,8 @@ function getNodeAt(root: Dict, path: string[]): Dict | null {
 }
 
 function lookupElement(node: Dict, category: string, elementId: string, optionId: string | null): boolean {
-  if (category === "inputs") {
-    const ids = (asArray(node.inputs) as Dict[]).map((i) => i?.id as string | undefined).filter(Boolean);
-    return ids.includes(elementId);
-  }
-  if (category === "outputs") {
-    const ids = (asArray(node.outputs) as Dict[]).map((o) => o?.id as string | undefined).filter(Boolean);
-    return ids.includes(elementId);
-  }
+  if (category === "inputs") return getInputIds(node).has(elementId);
+  if (category === "outputs") return getOutputIds(node).has(elementId);
   if (category === "decisions") {
     const decisions = asDict(node.decisions) ?? {};
     if (!(elementId in decisions)) return false;
@@ -291,7 +282,7 @@ function* iterCoverageIds(node: Dict, category: string): Generator<string> {
       yield did;
     }
   } else if (category === "outputs") {
-    for (const out of asArray(node.outputs) as Dict[]) {
+    for (const out of asArray<Dict>(node.outputs)) {
       const oid = out?.id as string | undefined;
       if (oid) yield oid;
     }
@@ -373,8 +364,6 @@ function walkSectionRequirements(node: Dict, path: string[], errors: SemanticErr
     if (sub) walkSectionRequirements(sub, [...path, subId], errors);
   }
 }
-
-import { dirname } from "node:path";
 
 export function validateNarrativeAnchorsFile(filePath: string): SemanticError[] {
   return validateNarrativeAnchors(loadYaml(filePath), { basePath: dirname(filePath) });

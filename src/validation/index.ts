@@ -11,8 +11,8 @@ export {
   SemanticError,
   validateAnalysis,
   validateUniverse,
-  validateAnalysisFile as semanticValidateAnalysisFile,
-  validateUniverseFile as semanticValidateUniverseFile,
+  semanticValidateAnalysisFile,
+  semanticValidateUniverseFile,
 } from "./semantic.js";
 
 export {

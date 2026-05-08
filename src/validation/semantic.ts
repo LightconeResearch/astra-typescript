@@ -1,8 +1,9 @@
-// Semantic validation: cross-references, constraint resolution, and
-// `from:`-path direction rules. Operates on parsed dict-like data
-// (matching the Python validator) so it doesn't depend on type narrowing.
+import { dirname } from "node:path";
 
 import {
+  type Dict,
+  asArray,
+  asDict,
   collectNodeDecisions,
   getInputIds,
   getOutputIds,
@@ -25,16 +26,6 @@ export class SemanticError {
 }
 
 const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
-
-type Dict = Record<string, unknown>;
-
-function asDict(v: unknown): Dict | undefined {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Dict) : undefined;
-}
-
-function asArray(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : [];
-}
 
 /** Parse a `../scope.id` style path. Returns null on malformed input. */
 function parseFromPath(ref: string): { up: number; segments: string[] } | null {
@@ -101,8 +92,8 @@ export function validateAnalysis(
     }
   }
 
-  const inputs = asArray(working.inputs) as Dict[];
-  const outputs = asArray(working.outputs) as Dict[];
+  const inputs = asArray<Dict>(working.inputs);
+  const outputs = asArray<Dict>(working.outputs);
   const priorInsights = asDict(working.prior_insights) ?? {};
 
   const inputIds = new Set<string>();
@@ -138,7 +129,7 @@ export function validateAnalysis(
   for (const [analysisId, raw] of Object.entries(subAnalyses)) {
     const sub = asDict(raw);
     if (!sub) continue;
-    for (const out of asArray(sub.outputs) as Dict[]) {
+    for (const out of asArray<Dict>(sub.outputs)) {
       const oid = out?.id as string | undefined;
       if (oid) subOutputIds.add(`${analysisId}.${oid}`);
     }
@@ -178,7 +169,6 @@ function _validateAnalysisNode(
   const errors: SemanticError[] = [];
   const nodePath = `${pathPrefix}.${nodeId}`;
 
-  // Path-only stub (not yet resolved): skip deep checks.
   if (node.path && !node.inputs && !node.outputs) return errors;
 
   for (const field of ["inputs", "outputs"]) {
@@ -193,7 +183,6 @@ function _validateAnalysisNode(
     }
   }
 
-  // Decision `from:` checks.
   const allDecisions = (asDict(node.decisions) ?? {}) as Record<string, Dict>;
   for (const [decisionId, decision] of Object.entries(allDecisions)) {
     const ref = decision?.from as string | undefined;
@@ -204,8 +193,7 @@ function _validateAnalysisNode(
     }
   }
 
-  // Inputs.
-  const nodeInputs = asArray(node.inputs) as Dict[];
+  const nodeInputs = asArray<Dict>(node.inputs);
   const nodeInputIds = new Set<string>();
   for (const inp of nodeInputs) {
     const id = inp?.id as string | undefined;
@@ -214,9 +202,8 @@ function _validateAnalysisNode(
     if (ref) errors.push(..._validateInputFrom(ref, ancestorChain, nodeId, nodePath));
   }
 
-  // Output IDs unique.
   const nodeOutputIds = new Set<string>();
-  for (const out of asArray(node.outputs) as Dict[]) {
+  for (const out of asArray<Dict>(node.outputs)) {
     const id = out?.id as string | undefined;
     if (id && nodeOutputIds.has(id)) {
       errors.push(
@@ -230,13 +217,13 @@ function _validateAnalysisNode(
     if (id) nodeOutputIds.add(id);
   }
 
-  const nodeOutputs = asArray(node.outputs) as Dict[];
+  const nodeOutputs = asArray<Dict>(node.outputs);
   errors.push(..._validateOutputsFrom(nodeOutputs, node, nodePath));
 
   const nodeDecisions = collectNodeDecisions(node) as Record<string, Dict>;
 
   // Build the constraint scope: locally-defined decisions plus any `from:`
-  // alias resolved one ancestor up (matches the Python `constraint_scope`).
+  // alias resolved one ancestor up (matches the Python constraint_scope).
   const constraintScope: Record<string, Dict> = { ...nodeDecisions };
   for (const [decisionId, decision] of Object.entries(allDecisions)) {
     const ref = decision?.from as string | undefined;
@@ -272,7 +259,7 @@ function _validateAnalysisNode(
   for (const [subId, raw] of Object.entries(subAnalyses)) {
     const sub = asDict(raw);
     if (!sub) continue;
-    for (const out of asArray(sub.outputs) as Dict[]) {
+    for (const out of asArray<Dict>(sub.outputs)) {
       const oid = out?.id as string | undefined;
       if (oid) subOutputIds.add(`${subId}.${oid}`);
     }
@@ -334,7 +321,7 @@ function _validateInsightArtifacts(
     const insight = asDict(raw);
     if (!insight) continue;
     const insightPath = `${prefix}.${insightId}`;
-    const evidenceList = asArray(insight.evidence) as Dict[];
+    const evidenceList = asArray<Dict>(insight.evidence);
     evidenceList.forEach((ev, i) => {
       const artifactRef = ev?.artifact as string | undefined;
       if (artifactRef !== undefined && !outputIds.has(artifactRef)) {
@@ -376,57 +363,20 @@ function _validateDecisions(
       );
     }
 
-    const when = decision.when as string | string[] | undefined;
-    if (when) {
-      const conds = typeof when === "string" ? [when] : when;
-      for (const cond of conds) {
-        const ref = cond.startsWith("~") ? cond.slice(1) : cond;
-        const parts = ref.split(".");
-        if (parts.length !== 2) {
-          errors.push(
-            new SemanticError(
-              "INVALID_WHEN_REF",
-              `Decision 'when' condition '${cond}' has invalid format`,
-              decisionPath,
-            ),
-          );
-          continue;
-        }
-        const [whenDecisionId, whenOptionId] = parts as [string, string];
-        if (!(whenDecisionId in decisions) && !(whenDecisionId in scope)) {
-          errors.push(
-            new SemanticError(
-              "INVALID_WHEN_REF",
-              `'when' references non-existent decision '${whenDecisionId}'`,
-              decisionPath,
-            ),
-          );
-        } else {
-          const refDecision = decisions[whenDecisionId] ?? scope[whenDecisionId];
-          const refOptions = refDecision ? (asDict(refDecision.options) ?? {}) : {};
-          if (refDecision && !(whenOptionId in refOptions)) {
-            errors.push(
-              new SemanticError(
-                "INVALID_WHEN_REF",
-                `'when' references non-existent option '${whenOptionId}' in decision '${whenDecisionId}'`,
-                decisionPath,
-              ),
-            );
-          }
-        }
-        if (whenDecisionId === decisionId) {
-          errors.push(
-            new SemanticError("INVALID_WHEN_REF", "'when' cannot reference own decision", decisionPath),
-          );
-        }
-      }
-    }
+    errors.push(
+      ..._validateWhenRefs(decision.when, {
+        decisions: { ...scope, ...decisions },
+        path: decisionPath,
+        ownerKind: "Decision",
+        forbidSelfRef: decisionId,
+      }),
+    );
 
     for (const [optionId, optionRaw] of Object.entries(options)) {
       const option = optionRaw;
       const optionPath = `${decisionPath}.options.${optionId}`;
 
-      const insightRefs = asArray(option.insights) as string[];
+      const insightRefs = asArray<string>(option.insights);
       insightRefs.forEach((insightRef, i) => {
         if (!(insightRef in priorInsights)) {
           errors.push(
@@ -439,10 +389,10 @@ function _validateDecisions(
         }
       });
 
-      for (const ref of asArray(option.incompatible_with) as string[]) {
+      for (const ref of asArray<string>(option.incompatible_with)) {
         errors.push(..._validateConstraintRef(ref, scope, optionPath));
       }
-      for (const ref of asArray(option.requires) as string[]) {
+      for (const ref of asArray<string>(option.requires)) {
         errors.push(..._validateConstraintRef(ref, scope, optionPath));
       }
 
@@ -492,52 +442,78 @@ function _validateOutputWhen(
 ): SemanticError[] {
   const errors: SemanticError[] = [];
   const outputsPrefix = pathPrefix ? `${pathPrefix}.outputs` : "outputs";
-
   for (const out of outputs) {
     const id = out?.id as string | undefined;
     if (!id) continue;
-    const when = out.when as string | string[] | undefined;
-    if (!when) continue;
-    const conds = typeof when === "string" ? [when] : when;
-    const outputPath = `${outputsPrefix}.${id}`;
-    for (const cond of conds) {
-      const ref = cond.startsWith("~") ? cond.slice(1) : cond;
-      const parts = ref.split(".");
-      if (parts.length !== 2) {
+    errors.push(
+      ..._validateWhenRefs(out.when, {
+        decisions,
+        path: `${outputsPrefix}.${id}`,
+        ownerKind: "Output",
+      }),
+    );
+  }
+  return errors;
+}
+
+interface WhenRefContext {
+  decisions: Record<string, Dict>;
+  path: string;
+  ownerKind: "Decision" | "Output";
+  /** Decision ID that may not appear in its own `when` clause. */
+  forbidSelfRef?: string;
+}
+
+function _validateWhenRefs(
+  when: unknown,
+  ctx: WhenRefContext,
+): SemanticError[] {
+  if (when == null) return [];
+  const conds = typeof when === "string" ? [when] : Array.isArray(when) ? (when as string[]) : [];
+  const errors: SemanticError[] = [];
+  for (const cond of conds) {
+    const ref = cond.startsWith("~") ? cond.slice(1) : cond;
+    const parts = ref.split(".");
+    if (parts.length !== 2) {
+      errors.push(
+        new SemanticError(
+          "INVALID_WHEN_REF",
+          `${ctx.ownerKind} 'when' condition '${cond}' has invalid format`,
+          ctx.path,
+        ),
+      );
+      continue;
+    }
+    const [decisionId, optionId] = parts as [string, string];
+    const referenced = ctx.decisions[decisionId];
+    if (!referenced) {
+      const subject = ctx.ownerKind === "Output" ? `${ctx.ownerKind} 'when'` : "'when'";
+      errors.push(
+        new SemanticError(
+          "INVALID_WHEN_REF",
+          `${subject} references non-existent decision '${decisionId}'`,
+          ctx.path,
+        ),
+      );
+    } else {
+      const refOptions = asDict(referenced.options) ?? {};
+      if (!(optionId in refOptions)) {
+        const subject = ctx.ownerKind === "Output" ? `${ctx.ownerKind} 'when'` : "'when'";
         errors.push(
           new SemanticError(
             "INVALID_WHEN_REF",
-            `Output 'when' condition '${cond}' has invalid format`,
-            outputPath,
+            `${subject} references non-existent option '${optionId}' in decision '${decisionId}'`,
+            ctx.path,
           ),
         );
-        continue;
-      }
-      const [decisionId, optionId] = parts as [string, string];
-      if (!(decisionId in decisions)) {
-        errors.push(
-          new SemanticError(
-            "INVALID_WHEN_REF",
-            `Output 'when' references non-existent decision '${decisionId}'`,
-            outputPath,
-          ),
-        );
-      } else {
-        const refDecision = decisions[decisionId]!;
-        const refOptions = (asDict(refDecision.options) ?? {}) as Record<string, Dict>;
-        if (!(optionId in refOptions)) {
-          errors.push(
-            new SemanticError(
-              "INVALID_WHEN_REF",
-              `Output 'when' references non-existent option '${optionId}' in decision '${decisionId}'`,
-              outputPath,
-            ),
-          );
-        }
       }
     }
+    if (ctx.forbidSelfRef && decisionId === ctx.forbidSelfRef) {
+      errors.push(
+        new SemanticError("INVALID_WHEN_REF", "'when' cannot reference own decision", ctx.path),
+      );
+    }
   }
-
   return errors;
 }
 
@@ -573,7 +549,7 @@ function _validateOutputDependencies(
       continue;
     }
 
-    const declaredInputs = asArray(out.inputs) as string[];
+    const declaredInputs = asArray<string>(out.inputs);
     depGraph[id] = declaredInputs.filter((i) => siblingOrExtra.has(i));
 
     for (const inpId of declaredInputs) {
@@ -588,7 +564,7 @@ function _validateOutputDependencies(
       }
     }
 
-    const declaredDecisions = asArray(out.decisions) as string[];
+    const declaredDecisions = asArray<string>(out.decisions);
     for (const decId of declaredDecisions) {
       if (!(decId in decisionsInScope)) {
         errors.push(
@@ -918,10 +894,6 @@ function _validateConstraintRef(
   return [];
 }
 
-// ---------------------------------------------------------------------------
-// Universe validation
-// ---------------------------------------------------------------------------
-
 export function validateUniverse(
   universeData: Dict,
   analysisData: Dict,
@@ -1082,7 +1054,7 @@ function _validateNodeUniverseConstraints(
     if (!option) continue;
     const path = `${pathPrefix}.${decisionId}`;
 
-    for (const ref of asArray(option.incompatible_with) as string[]) {
+    for (const ref of asArray<string>(option.incompatible_with)) {
       const parts = ref.split(".");
       if (parts.length === 2 && universeDecisions[parts[0]!] === parts[1]!) {
         errors.push(
@@ -1094,7 +1066,7 @@ function _validateNodeUniverseConstraints(
         );
       }
     }
-    for (const ref of asArray(option.requires) as string[]) {
+    for (const ref of asArray<string>(option.requires)) {
       const parts = ref.split(".");
       if (parts.length === 2 && universeDecisions[parts[0]!] !== parts[1]!) {
         const actual = universeDecisions[parts[0]!] ?? "(not set)";
@@ -1111,17 +1083,11 @@ function _validateNodeUniverseConstraints(
   return errors;
 }
 
-// ---------------------------------------------------------------------------
-// File-level wrappers
-// ---------------------------------------------------------------------------
-
-import { dirname } from "node:path";
-
-export function validateAnalysisFile(filePath: string): SemanticError[] {
+export function semanticValidateAnalysisFile(filePath: string): SemanticError[] {
   return validateAnalysis(loadYaml(filePath), { basePath: dirname(filePath) });
 }
 
-export function validateUniverseFile(
+export function semanticValidateUniverseFile(
   universePath: string,
   analysisPath: string,
 ): SemanticError[] {

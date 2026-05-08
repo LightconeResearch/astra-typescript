@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   validateAnalysis,
-  validateAnalysisFile,
+  semanticValidateAnalysisFile,
   validateUniverse,
   SemanticError,
 } from "../src/validation/semantic.js";
@@ -13,15 +13,15 @@ const codes = (errs: SemanticError[]): string[] => errs.map((e) => e.code);
 
 describe("semantic validation: valid fixtures pass cleanly", () => {
   it("Analysis-001 has no semantic errors", () => {
-    expect(validateAnalysisFile(FIXTURES.validAnalysis)).toEqual([]);
+    expect(semanticValidateAnalysisFile(FIXTURES.validAnalysis)).toEqual([]);
   });
 
   it("iris example has no semantic errors", () => {
-    expect(validateAnalysisFile(FIXTURES.irisAnalysis)).toEqual([]);
+    expect(semanticValidateAnalysisFile(FIXTURES.irisAnalysis)).toEqual([]);
   });
 
   it("iris_pipeline example has no semantic errors", () => {
-    expect(validateAnalysisFile(FIXTURES.irisPipelineAnalysis)).toEqual([]);
+    expect(semanticValidateAnalysisFile(FIXTURES.irisPipelineAnalysis)).toEqual([]);
   });
 });
 

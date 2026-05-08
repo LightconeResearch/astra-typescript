@@ -1,6 +1,3 @@
-// Public API for @astra-spec/sdk. The package focuses on parsing and
-// validating ASTRA analyses; downstream tools layer their own UX on top.
-
 export type {
   Analysis,
   Decision,
@@ -33,22 +30,17 @@ export {
 } from "./helpers.js";
 
 export {
-  // Structural (JSON Schema)
   validateAnalysisData,
   validateUniverseData,
   validateAnalysisFile,
   validateUniverseFile,
   isValidAnalysis,
   isValidUniverse,
-
-  // Semantic
   SemanticError,
   validateAnalysis,
   validateUniverse,
   semanticValidateAnalysisFile,
   semanticValidateUniverseFile,
-
-  // Narrative
   NarrativeWarning,
   validateNarrativeAnchors,
   validateNarrativeAnchorsFile,

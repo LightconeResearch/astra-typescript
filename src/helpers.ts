@@ -1,31 +1,33 @@
-// Dict-based helpers that operate on parsed YAML data structures. Mirrors
-// the Python `astra.helpers` module so semantic validation can resolve
-// `from:` paths, `when:` conditions, and tree lookups without requiring a
-// strongly-typed model.
-
 import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import type { Analysis, Decision, Input, Output, Universe } from "./types.js";
+import type { Decision, Input, Output } from "./types.js";
 
-/** Parse a YAML string into an unknown record. */
-export function parseYamlString(text: string): Record<string, unknown> {
+export type Dict = Record<string, unknown>;
+
+export function asDict(v: unknown): Dict | undefined {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Dict) : undefined;
+}
+
+export function asArray<T = unknown>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
+export function parseYamlString(text: string): Dict {
   const data = parseYaml(text);
   if (data == null || typeof data !== "object" || Array.isArray(data)) {
     throw new Error("YAML root must be a mapping/object");
   }
-  return data as Record<string, unknown>;
+  return data as Dict;
 }
 
-/** Read a YAML file from disk as a parsed object. */
-export function loadYaml(filePath: string): Record<string, unknown> {
-  const text = readFileSync(filePath, "utf8");
-  return parseYamlString(text);
+export function loadYaml(filePath: string): Dict {
+  return parseYamlString(readFileSync(filePath, "utf8"));
 }
 
-/** Evaluate a `when` clause (string | string[] | undefined) against a
- *  flat decision selection. AND across entries; `~` prefix negates. */
+/** Evaluate a `when` clause against a flat decision selection. AND across
+ *  entries; `~` prefix negates. */
 export function isConditionMet(
   when: string | string[] | undefined | null,
   selections: Record<string, string>,
@@ -47,10 +49,8 @@ export function isConditionMet(
   return true;
 }
 
-/** Locally-defined decisions on a node (skips `from:` aliases). */
-export function collectNodeDecisions(
-  node: Record<string, unknown>,
-): Record<string, Decision> {
+/** Locally-defined decisions on a node — `from:` aliases are skipped. */
+export function collectNodeDecisions(node: Dict): Record<string, Decision> {
   const out: Record<string, Decision> = {};
   const decisions = (node.decisions ?? {}) as Record<string, Decision>;
   for (const [id, decision] of Object.entries(decisions)) {
@@ -60,37 +60,32 @@ export function collectNodeDecisions(
   return out;
 }
 
-export function getInputIds(node: Record<string, unknown>): Set<string> {
-  const inputs = (node.inputs ?? []) as Input[];
+export function getInputIds(node: Dict): Set<string> {
   const out = new Set<string>();
-  for (const inp of inputs) if (inp?.id) out.add(inp.id);
+  for (const inp of asArray<Input>(node.inputs)) if (inp?.id) out.add(inp.id);
   return out;
 }
 
-export function getOutputIds(node: Record<string, unknown>): Set<string> {
-  const outputs = (node.outputs ?? []) as Output[];
+export function getOutputIds(node: Dict): Set<string> {
   const out = new Set<string>();
-  for (const o of outputs) if (o?.id) out.add(o.id);
+  for (const o of asArray<Output>(node.outputs)) if (o?.id) out.add(o.id);
   return out;
 }
 
 /** Walk `analyses.*.path` references and inline external `astra.yaml`
  *  files. Returns a new object only if at least one path was resolved. */
-export function resolveAnalysisTree(
-  data: Record<string, unknown>,
-  basePath: string,
-): Record<string, unknown> {
+export function resolveAnalysisTree(data: Dict, basePath: string): Dict {
   const analyses = data.analyses;
   if (!analyses || typeof analyses !== "object") return data;
 
-  const resolved: Record<string, unknown> = {};
+  const resolved: Dict = {};
   let changed = false;
   for (const [id, raw] of Object.entries(analyses)) {
-    if (!raw || typeof raw !== "object") {
+    const node = asDict(raw);
+    if (!node) {
       resolved[id] = raw;
       continue;
     }
-    const node = raw as Record<string, unknown>;
     const subPath = node.path;
     if (typeof subPath === "string" && subPath) {
       const absDir = isAbsolute(subPath) ? subPath : resolvePath(basePath, subPath);
@@ -101,8 +96,7 @@ export function resolveAnalysisTree(
         resolved[id] = resolveAnalysisTree(subData, absDir);
         changed = true;
       } catch {
-        // If the file doesn't exist, leave the stub in place — a
-        // higher-layer warning surfaces the problem.
+        // Missing file is surfaced by a higher layer; leave the stub here.
         resolved[id] = node;
       }
     } else {
@@ -116,56 +110,34 @@ export function resolveAnalysisTree(
   return { ...data, analyses: resolved };
 }
 
-/** Inject mapping keys as `id` fields on each value, mirroring the
- *  Python-side preprocessing. ASTRA YAML is keyed-dict, but the JSON
- *  Schema requires `id` to be set. Mutates the supplied data in place. */
-export function injectAnalysisIdsInPlace(data: Record<string, unknown>): void {
-  for (const field of ["decisions", "analyses", "prior_insights", "findings"]) {
-    const mapping = data[field];
-    if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) continue;
-    for (const [key, value] of Object.entries(mapping as Record<string, unknown>)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const obj = value as Record<string, unknown>;
-      if (obj.id === undefined) obj.id = key;
+function injectMapKeysAsIds(map: Dict, recurse?: (value: Dict) => void): void {
+  for (const [key, value] of Object.entries(map)) {
+    const obj = asDict(value);
+    if (!obj) continue;
+    if (obj.id === undefined) obj.id = key;
+    if (recurse) recurse(obj);
+  }
+}
+
+/** ASTRA YAML uses keyed dicts but the JSON Schema requires explicit `id`
+ *  fields; this fills them in from the keys. Mutates `data` in place. */
+export function injectAnalysisIdsInPlace(data: Dict): void {
+  for (const field of ["decisions", "analyses", "prior_insights", "findings"] as const) {
+    const mapping = asDict(data[field]);
+    if (!mapping) continue;
+    injectMapKeysAsIds(mapping, (value) => {
       if (field === "decisions") {
-        const opts = obj.options;
-        if (opts && typeof opts === "object" && !Array.isArray(opts)) {
-          for (const [okey, ovalue] of Object.entries(opts as Record<string, unknown>)) {
-            if (ovalue && typeof ovalue === "object" && !Array.isArray(ovalue)) {
-              const o = ovalue as Record<string, unknown>;
-              if (o.id === undefined) o.id = okey;
-            }
-          }
-        }
+        const opts = asDict(value.options);
+        if (opts) injectMapKeysAsIds(opts);
+      } else if (field === "analyses") {
+        injectAnalysisIdsInPlace(value);
       }
-      if (field === "analyses") {
-        injectAnalysisIdsInPlace(obj);
-      }
-    }
+    });
   }
 }
 
-export function injectUniverseIdsInPlace(node: Record<string, unknown>): void {
-  const analyses = node.analyses;
-  if (!analyses || typeof analyses !== "object" || Array.isArray(analyses)) return;
-  for (const [key, value] of Object.entries(analyses as Record<string, unknown>)) {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const obj = value as Record<string, unknown>;
-      if (obj.id === undefined) obj.id = key;
-      injectUniverseIdsInPlace(obj);
-    }
-  }
+export function injectUniverseIdsInPlace(node: Dict): void {
+  const analyses = asDict(node.analyses);
+  if (!analyses) return;
+  injectMapKeysAsIds(analyses, injectUniverseIdsInPlace);
 }
-
-/** Deep clone via JSON round-trip. ASTRA documents are pure data — no
- *  cycles, no functions — so this is sufficient and avoids a dep. */
-export function deepClone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-export function dirOf(filePath: string): string {
-  return dirname(filePath);
-}
-
-// Re-export type utility for consumers that want strongly-typed outputs.
-export type { Analysis, Universe };

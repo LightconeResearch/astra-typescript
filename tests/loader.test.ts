@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,9 +10,6 @@ import {
   loadAstraSchema,
   setAstraSchema,
 } from "../src/schema/index.js";
-import { SPEC_PATHS } from "./setup.js";
-
-const localUrl = pathToFileURL(SPEC_PATHS.schema).href;
 
 beforeEach(() => clearAstraSchemaCache());
 
@@ -28,21 +25,33 @@ describe("astraSchemaUrl", () => {
 
 describe("loadAstraSchema", () => {
   it("loads from a file:// URL", async () => {
-    const schema = await loadAstraSchema({ url: localUrl, cacheDir: false });
+    // Write a minimal schema stub to a temp file and load it. This
+    // exercises the file:// branch without requiring any external fetch.
+    const dir = mkdtempSync(join(tmpdir(), "astra-schema-stub-"));
+    const path = join(dir, "schema.json");
+    writeFileSync(path, JSON.stringify({ $defs: { Analysis: {}, Universe: {} } }));
+    const url = pathToFileURL(path).href;
+
+    const schema = await loadAstraSchema({ url, cacheDir: false });
     expect(schema).toHaveProperty("$defs");
     expect((schema as { $defs: Record<string, unknown> }).$defs).toHaveProperty("Analysis");
   });
 
   it("writes a disk cache entry and reuses it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astra-schema-stub-"));
+    const path = join(dir, "schema.json");
+    writeFileSync(path, JSON.stringify({ $defs: { Analysis: {}, Universe: {} } }));
+    const url = pathToFileURL(path).href;
+
     const cacheDir = mkdtempSync(join(tmpdir(), "astra-schema-cache-test-"));
-    await loadAstraSchema({ url: localUrl, cacheDir });
+    await loadAstraSchema({ url, cacheDir });
     expect(existsSync(cacheDir)).toBe(true);
     expect(readdirSync(cacheDir).length).toBe(1);
 
-    // Second call should still succeed even with the network unavailable
-    // because we hit the disk cache (we simulate by clearing memory only).
+    // After clearing the in-memory cache, a second call still succeeds
+    // because the disk cache satisfies it.
     clearAstraSchemaCache();
-    const schema = await loadAstraSchema({ url: localUrl, cacheDir });
+    const schema = await loadAstraSchema({ url, cacheDir });
     expect(schema).toHaveProperty("$defs");
   });
 });

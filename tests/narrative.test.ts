@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { resolve } from "node:path";
 
 import {
   checkNarrativeCoverage,
@@ -7,21 +6,15 @@ import {
   validateNarrativeAnchorsFile,
   validateNarrativeSections,
 } from "../src/validation/narrative.js";
-import { loadYaml } from "../src/helpers.js";
-import { SPEC_PATHS } from "./setup.js";
-
-const VALID = SPEC_PATHS.validFixtures;
-const EXAMPLES = SPEC_PATHS.examples;
+import { FIXTURES } from "./setup.js";
 
 describe("narrative anchors: valid fixtures resolve", () => {
   it("Analysis-001", () => {
-    const errors = validateNarrativeAnchorsFile(resolve(VALID, "Analysis-001.yaml"));
-    expect(errors).toEqual([]);
+    expect(validateNarrativeAnchorsFile(FIXTURES.validAnalysis)).toEqual([]);
   });
 
   it("iris example", () => {
-    const errors = validateNarrativeAnchorsFile(resolve(EXAMPLES, "iris/astra.yaml"));
-    expect(errors).toEqual([]);
+    expect(validateNarrativeAnchorsFile(FIXTURES.irisAnalysis)).toEqual([]);
   });
 });
 
@@ -75,5 +68,3 @@ describe("narrative coverage warnings", () => {
   });
 });
 
-// Bind loadYaml so the import isn't pruned (kept for future tests).
-void loadYaml;

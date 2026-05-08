@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { resolve } from "node:path";
 
 import {
   validateAnalysis,
@@ -8,24 +7,21 @@ import {
   SemanticError,
 } from "../src/validation/semantic.js";
 import { loadYaml } from "../src/helpers.js";
-import { SPEC_PATHS } from "./setup.js";
+import { FIXTURES } from "./setup.js";
 
 const codes = (errs: SemanticError[]): string[] => errs.map((e) => e.code);
 
 describe("semantic validation: valid fixtures pass cleanly", () => {
   it("Analysis-001 has no semantic errors", () => {
-    const errors = validateAnalysisFile(resolve(SPEC_PATHS.validFixtures, "Analysis-001.yaml"));
-    expect(errors).toEqual([]);
+    expect(validateAnalysisFile(FIXTURES.validAnalysis)).toEqual([]);
   });
 
   it("iris example has no semantic errors", () => {
-    const errors = validateAnalysisFile(resolve(SPEC_PATHS.examples, "iris/astra.yaml"));
-    expect(errors).toEqual([]);
+    expect(validateAnalysisFile(FIXTURES.irisAnalysis)).toEqual([]);
   });
 
   it("iris_pipeline example has no semantic errors", () => {
-    const errors = validateAnalysisFile(resolve(SPEC_PATHS.examples, "iris_pipeline/astra.yaml"));
-    expect(errors).toEqual([]);
+    expect(validateAnalysisFile(FIXTURES.irisPipelineAnalysis)).toEqual([]);
   });
 });
 
@@ -107,16 +103,13 @@ describe("semantic validation: targeted negative cases", () => {
 
 describe("universe validation", () => {
   it("validates the canonical universe against the iris analysis", () => {
-    const universe = loadYaml(resolve(SPEC_PATHS.examples, "iris/universes/baseline.yaml"));
-    const analysis = loadYaml(resolve(SPEC_PATHS.examples, "iris/astra.yaml"));
-    const errors = validateUniverse(universe, analysis);
+    const errors = validateUniverse(loadYaml(FIXTURES.irisUniverseBaseline), loadYaml(FIXTURES.irisAnalysis));
     expect(errors).toEqual([]);
   });
 
   it("flags a universe that selects an unknown decision", () => {
-    const analysis = loadYaml(resolve(SPEC_PATHS.examples, "iris/astra.yaml"));
     const universe = { id: "u", decisions: { not_a_decision: "x" } };
-    const errors = validateUniverse(universe, analysis);
+    const errors = validateUniverse(universe, loadYaml(FIXTURES.irisAnalysis));
     expect(codes(errors)).toContain("UNKNOWN_DECISION");
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "TypeScript SDK for ASTRA (Agentic Schema for Transparent Research Analysis): parse, validate, and inspect ASTRA analysis specifications.",
   "type": "module",
   "license": "BSD-3-Clause",

@@ -6,7 +6,6 @@ export type {
   Input,
   InputType,
   Insight,
-  Narrative,
   Option,
   Output,
   OutputType,
@@ -41,13 +40,6 @@ export {
   validateUniverse,
   semanticValidateAnalysisFile,
   semanticValidateUniverseFile,
-  NarrativeWarning,
-  validateNarrativeAnchors,
-  validateNarrativeAnchorsFile,
-  checkNarrativeCoverage,
-  checkNarrativeCoverageFile,
-  validateNarrativeSections,
-  validateNarrativeSectionsFile,
 } from "./validation/index.js";
 
 export {

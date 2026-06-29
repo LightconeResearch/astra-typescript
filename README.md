@@ -47,15 +47,13 @@ Disable disk caching with `cacheDir: false`. Force a refetch with `force: true`.
 import {
   validateAnalysisFile,          // structural (JSON Schema)
   semanticValidateAnalysisFile,  // cross-references, constraints, from-paths
-  validateNarrativeAnchorsFile,  // markdown anchor resolution
 } from "@astra-spec/sdk";
 
 const structural = await validateAnalysisFile("astra.yaml");          // string[]
 const semantic = semanticValidateAnalysisFile("astra.yaml");          // SemanticError[]
-const narrative = validateNarrativeAnchorsFile("astra.yaml");         // SemanticError[]
 
-if (structural.length || semantic.length || narrative.length) {
-  for (const e of [...structural, ...semantic, ...narrative]) console.error(String(e));
+if (structural.length || semantic.length) {
+  for (const e of [...structural, ...semantic]) console.error(String(e));
   process.exit(1);
 }
 ```
@@ -89,9 +87,8 @@ const semantic = validateUniverse(
 | Schema loader | `loadAstraSchema`, `setAstraSchema`, `clearAstraSchemaCache`, `astraSchemaUrl`, `ASTRA_SPEC_HOST`, `JsonSchema`, `SchemaLoadOptions` |
 | Structural validation | `validateAnalysisData`, `validateAnalysisFile`, `validateUniverseData`, `validateUniverseFile`, `isValidAnalysis`, `isValidUniverse` (all async) |
 | Semantic validation | `validateAnalysis`, `validateUniverse`, `semanticValidateAnalysisFile`, `semanticValidateUniverseFile`, `SemanticError` |
-| Narrative validation | `validateNarrativeAnchors`, `checkNarrativeCoverage`, `validateNarrativeSections` (and `*File` variants), `NarrativeWarning` |
 | Helpers | `loadYaml`, `parseYamlString`, `isConditionMet`, `collectNodeDecisions`, `resolveAnalysisTree`, `getInputIds`, `getOutputIds` |
-| Types | `Analysis`, `Universe`, `UniverseNode`, `Input`, `Output`, `Decision`, `Option`, `Recipe`, `Resources`, `Insight`, `Evidence`, `Narrative`, `TextQuoteSelector`, `FragmentSelector` |
+| Types | `Analysis`, `Universe`, `UniverseNode`, `Input`, `Output`, `Decision`, `Option`, `Recipe`, `Resources`, `Insight`, `Evidence`, `TextQuoteSelector`, `FragmentSelector` |
 
 ## Validation layers
 
@@ -99,7 +96,6 @@ ASTRA validation is layered, matching the Python implementation:
 
 1. **Structural** — JSON Schema (Ajv, draft 2019-09). Shape, types, required fields, ID patterns, `from`-alias forbidden-field rules. Async because it fetches/loads the schema.
 2. **Semantic** — cross-references and constraint resolution: duplicate IDs, default option existence, `from:` direction rules, `Output.inputs` / `Output.decisions` resolution, recipe template placeholders, output dependency cycles, universe selections, constraint compatibility. Synchronous.
-3. **Narrative** — Markdown anchor resolution, coverage warnings (decisions/findings/outputs/sub-analyses unmentioned), and section-required-when-data-present. Synchronous.
 
 ## Development
 

@@ -99,20 +99,11 @@ export interface Decision {
   when?: string[];
 }
 
-export interface Narrative {
-  summary?: string;
-  findings?: string;
-  methods?: string;
-  inputs?: string;
-  outputs?: string;
-}
-
 export interface Analysis {
   id?: string;
   version?: string;
   name?: string;
-  narrative?: Narrative;
-  authors?: string[];
+  description?: string;
   tags?: string[];
   inputs?: Input[];
   outputs?: Output[];

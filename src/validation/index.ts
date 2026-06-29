@@ -14,13 +14,3 @@ export {
   semanticValidateAnalysisFile,
   semanticValidateUniverseFile,
 } from "./semantic.js";
-
-export {
-  NarrativeWarning,
-  validateNarrativeAnchors,
-  validateNarrativeAnchorsFile,
-  checkNarrativeCoverage,
-  checkNarrativeCoverageFile,
-  validateNarrativeSections,
-  validateNarrativeSectionsFile,
-} from "./narrative.js";

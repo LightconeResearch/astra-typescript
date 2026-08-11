@@ -51,3 +51,5 @@ export {
   setAstraSchema,
   clearAstraSchemaCache,
 } from "./schema/index.js";
+
+export * from "./view-model/index.js";

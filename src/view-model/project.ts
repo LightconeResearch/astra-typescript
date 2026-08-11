@@ -11,7 +11,8 @@
 // stat'ed for metadata, never read. Table previews, paper caches, and wire
 // envelopes are host concerns.
 
-import { parseYamlString } from "../helpers.js";
+import { parse as parseYaml } from "yaml";
+
 import type {
   DirectoryEntry,
   FileStatInfo,
@@ -82,6 +83,15 @@ export interface ProjectViewOptions {
 }
 
 type Dict = Record<string, unknown>;
+
+/** Local YAML-mapping parse so this subtree stays free of node:* imports. */
+function parseYamlString(text: string): Dict {
+  const data = parseYaml(text);
+  if (data == null || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("YAML root must be a mapping/object");
+  }
+  return data as Dict;
+}
 
 interface LegacyRecord {
   [key: string]: unknown;
@@ -160,8 +170,10 @@ async function sha256Hex(chunks: Uint8Array[]): Promise<string> {
 }
 
 function mtimeNsOf(stat: FileStatInfo): string {
-  if (stat.mtimeNs !== undefined) return stat.mtimeNs.toString();
-  return BigInt(Math.round(stat.mtimeMs * 1e6)).toString();
+  // Digest with millisecond precision only: the Jupyter contents API cannot
+  // see nanoseconds, and revision digests must agree across hosts so that a
+  // graph organization stamped by one host is "current" in another.
+  return (BigInt(Math.floor(stat.mtimeMs)) * 1_000_000n).toString();
 }
 
 /** Sort project-relative paths by path components, matching Python Path order. */

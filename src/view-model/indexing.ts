@@ -83,7 +83,7 @@ export function resolveProjectRecord(
 ): LocatedProjectRecord | undefined {
   const canonicalPath = typeof reference === "string"
     ? reference
-    : reference.canonicalPath ?? reference.path;
+    : reference.canonicalPath;
   const exact = canonicalPath ? index.recordByPath.get(canonicalPath) : undefined;
   if (exact) return exact;
 

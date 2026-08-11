@@ -246,6 +246,4 @@ export interface ProjectRecordReference {
   kind?: AstraRecordKind;
   id: string;
   canonicalPath?: string;
-  /** Compatibility spelling used by the first Jupyter prototype. */
-  path?: string;
 }

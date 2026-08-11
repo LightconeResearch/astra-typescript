@@ -99,6 +99,56 @@ describe("semantic validation: targeted negative cases", () => {
     });
     expect(codes(errors)).toContain("INVALID_DECISION_FROM");
   });
+
+  it("validates child decision citations against child-local prior insights", () => {
+    const errors = validateAnalysis({
+      version: "1.0",
+      name: "x",
+      inputs: [],
+      outputs: [],
+      analyses: {
+        child: {
+          inputs: [],
+          outputs: [],
+          decisions: {
+            method: {
+              default: "published",
+              options: { published: { insights: ["child_evidence"] } },
+            },
+          },
+          prior_insights: {
+            child_evidence: { claim: "Evidence owned by the child analysis." },
+          },
+        },
+      },
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it("does not resolve child decision citations from root prior insights", () => {
+    const errors = validateAnalysis({
+      version: "1.0",
+      name: "x",
+      inputs: [],
+      outputs: [],
+      prior_insights: {
+        root_evidence: { claim: "Evidence owned by the root analysis." },
+      },
+      analyses: {
+        child: {
+          inputs: [],
+          outputs: [],
+          decisions: {
+            method: {
+              default: "published",
+              options: { published: { insights: ["root_evidence"] } },
+            },
+          },
+        },
+      },
+    });
+    expect(codes(errors)).toContain("INVALID_INSIGHT_REF");
+  });
 });
 
 describe("universe validation", () => {

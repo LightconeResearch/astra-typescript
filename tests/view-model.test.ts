@@ -14,7 +14,7 @@ import {
 import { createNodeFileAccess } from "../src/view-model/node.js";
 
 const ASTRA_YAML = `
-version: "0.0.8"
+version: "1.0"
 name: Projector example
 inputs:
   - id: catalog
@@ -124,7 +124,7 @@ describe("buildProjectViewModel", () => {
   it("keeps unresolved references as diagnostics, not dangling edges", async () => {
     await writeFile(
       join(root, "astra.yaml"),
-      'version: "0.0.8"\nname: Unresolved\noutputs:\n  - id: headline\n    type: figure\n    inputs: [missing_catalog]\n',
+      'version: "1.0"\nname: Unresolved\noutputs:\n  - id: headline\n    type: figure\n    inputs: [missing_catalog]\n',
     );
 
     const bundle = await buildProjectViewModel(createNodeFileAccess(root));
@@ -139,12 +139,12 @@ describe("buildProjectViewModel", () => {
     });
     expect(
       bundle.model.diagnostics.some(
-        (diagnostic) => diagnostic.code === "legacy_unresolved_relation",
+        (diagnostic) => diagnostic.code === "unresolved_relation",
       ),
     ).toBe(true);
   });
 
-  it("reads the graph organization from .astra/ with a root fallback", async () => {
+  it("reads the graph organization from .astra/ only", async () => {
     await writeFile(join(root, "astra.yaml"), ASTRA_YAML);
     await mkdir(join(root, ".astra"));
     const organization =
@@ -159,11 +159,27 @@ describe("buildProjectViewModel", () => {
 
     await rm(join(root, ".astra"), { recursive: true });
     await writeFile(join(root, "astra.graph.yaml"), organization);
-    const fallback = await buildProjectViewModel(createNodeFileAccess(root));
-    expect(fallback.graphOrganization).toMatchObject({
-      schema_version: "graph-organization.v1",
-    });
-    expect(fallback.dependencies.organization).toEqual(["astra.graph.yaml"]);
+    const rootSidecar = await buildProjectViewModel(createNodeFileAccess(root));
+    expect(rootSidecar.graphOrganization).toBeUndefined();
+    expect(rootSidecar.dependencies.organization).toEqual([]);
+  });
+
+  it("rejects retired schema versions and removed fields", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      'version: "0.0.13"\nname: Retired schema\n',
+    );
+    await expect(
+      buildProjectViewModel(createNodeFileAccess(root)),
+    ).rejects.toThrow('Unsupported ASTRA version "0.0.13"');
+
+    await writeFile(
+      join(root, "astra.yaml"),
+      'version: "1.0"\nname: Current schema\nauthors: [Legacy Author]\n',
+    );
+    await expect(
+      buildProjectViewModel(createNodeFileAccess(root)),
+    ).rejects.toThrow('Unsupported ASTRA field "authors"');
   });
 
   it("changes the analysis revision when the spec changes, not when artifacts do", async () => {

@@ -1,11 +1,8 @@
 // Project an ASTRA analysis tree into canonical `project-view-model.v1`.
 //
 // This is the shared projector every host runs (JupyterLab in the browser,
-// VSCode in the extension host, the MyST build in Node). It is a faithful
-// port of the reference implementation that shipped in jupyterlab-astra
-// (`loader.py` + `projector.py`), validated byte-for-byte against it on the
-// DESI DR1 BAO project. Diagnostic codes keep their historical spellings so
-// downstream consumers are unaffected.
+// VSCode in the extension host, the MyST build in Node). It projects current
+// ASTRA documents directly into the host-neutral viewer contract.
 //
 // The projector never touches bytes beyond the YAML tree: artifact files are
 // stat'ed for metadata, never read. Table previews, paper caches, and wire
@@ -26,14 +23,25 @@ import {
   joinPath,
 } from "./access.js";
 import type {
+  AstraRecordKind,
+  DecisionOptionView,
+  DecisionRecordView,
+  EvidenceDescriptor,
+  FindingRecordView,
+  InputRecordView,
+  OutputRecordView,
+  PriorInsightRecordView,
+  ProjectRecordView,
+  ProjectScopeView,
   ProjectViewModelV1,
+  ProvenanceReference,
+  RecordRelation,
   ResourceDescriptor,
   ViewModelDiagnostic,
 } from "./types.js";
 import { PROJECT_VIEW_MODEL_SCHEMA_VERSION } from "./types.js";
 
 export const GRAPH_ORGANIZATION_PATH = ".astra/astra.graph.yaml";
-export const LEGACY_GRAPH_ORGANIZATION_PATH = "astra.graph.yaml";
 
 /** Host-side binding from a resource id to a real file the host may serve. */
 export interface ArtifactBinding {
@@ -93,26 +101,11 @@ function parseYamlString(text: string): Dict {
   return data as Dict;
 }
 
-interface LegacyRecord {
-  [key: string]: unknown;
-  id: string;
-  path: string;
-  kind: "input" | "decision" | "output" | "finding" | "prior_insight";
-}
-
-interface LegacyScope {
-  id: string;
-  path: string;
-  name: string;
-  parent: string | null;
-  children: string[];
-  records: LegacyRecord[];
-}
-
 const OUTPUT_TYPES = new Set([
   "figure",
   "table",
   "metric",
+  "data",
   "dataset",
   "report",
   "file",
@@ -146,6 +139,12 @@ function asDict(value: unknown): Dict | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function mediaTypeFor(fileName: string): string {
@@ -228,26 +227,19 @@ interface GraphOrganizationResult {
 async function readGraphOrganization(
   access: ProjectFileAccess,
 ): Promise<GraphOrganizationResult> {
-  let found: string | undefined;
-  for (const relative of [GRAPH_ORGANIZATION_PATH, LEGACY_GRAPH_ORGANIZATION_PATH]) {
-    const stat = await access.stat(relative);
-    if (stat?.type === "file") {
-      found = relative;
-      break;
-    }
-  }
-  if (!found) return { value: undefined };
+  const stat = await access.stat(GRAPH_ORGANIZATION_PATH);
+  if (stat?.type !== "file") return { value: undefined };
   let parsed: unknown;
   try {
-    parsed = parseYamlString(await access.readText(found));
+    parsed = parseYamlString(await access.readText(GRAPH_ORGANIZATION_PATH));
   } catch (error) {
     return {
       value: { load_error: String(error instanceof Error ? error.message : error) },
-      path: found,
+      path: GRAPH_ORGANIZATION_PATH,
       diagnostic: {
         severity: "warning",
         code: "graph.organization.unreadable",
-        path: found,
+        path: GRAPH_ORGANIZATION_PATH,
         message:
           "The graph organization file could not be read. "
           + "The complete canonical graph remains available.",
@@ -257,18 +249,18 @@ async function readGraphOrganization(
   if (!asDict(parsed)) {
     return {
       value: { load_error: "astra.graph.yaml is not a mapping" },
-      path: found,
+      path: GRAPH_ORGANIZATION_PATH,
       diagnostic: {
         severity: "warning",
         code: "graph.organization.not_mapping",
-        path: found,
+        path: GRAPH_ORGANIZATION_PATH,
         message:
           "The graph organization file must contain a YAML mapping. "
           + "The complete canonical graph remains available.",
       },
     };
   }
-  return { value: parsed, path: found };
+  return { value: parsed, path: GRAPH_ORGANIZATION_PATH };
 }
 
 interface UniverseResult {
@@ -342,27 +334,6 @@ function extractEvidence(items: unknown): Dict[] {
     result.push(extracted);
   }
   return result;
-}
-
-function firstEvidenceValue(evidence: Dict[], key: string): unknown {
-  for (const item of evidence) {
-    if (item[key] != null) return item[key];
-  }
-  return undefined;
-}
-
-function optionInsights(options: Dict): Record<string, string[]> | undefined {
-  const result: Record<string, string[]> = {};
-  for (const [optionId, option] of Object.entries(options)) {
-    const entry = asDict(option);
-    if (!entry) continue;
-    const insights = entry.insights;
-    if (Array.isArray(insights)) {
-      const values = insights.filter((value): value is string => typeof value === "string");
-      if (values.length) result[optionId] = values;
-    }
-  }
-  return Object.keys(result).length ? result : undefined;
 }
 
 function decisionActive(decision: Dict, selected: Dict): boolean {
@@ -444,497 +415,67 @@ async function discoverArtifact(
   return joinPath(flatDirectory, top.name);
 }
 
-interface LoadedStructures {
-  rootAnalysis: Dict;
-  scopes: LegacyScope[];
-  artifacts: ArtifactBinding[];
-  diagnostics: Dict[];
-  universeId: string;
-  availableUniverses: string[];
-  graphOrganization: GraphOrganizationResult;
-  dependencies: ProjectDependencies;
-}
-
-async function loadStructures(
-  access: ProjectFileAccess,
-  options: ProjectViewOptions,
-): Promise<LoadedStructures> {
-  const rootStat = await access.stat("astra.yaml");
-  if (!rootStat) {
-    throw new Error("No astra.yaml found in the project root");
-  }
-  const rootAnalysis = await loadYamlDict(access, "astra.yaml");
-  const graphOrganization = await readGraphOrganization(access);
-  const { universe, path: universePath, available } = await readUniverse(
-    access,
-    options.universeId,
-  );
-  const universeId = String(universe.id ?? "default");
-
-  const scopes: LegacyScope[] = [];
-  const artifacts: ArtifactBinding[] = [];
-  const diagnostics: Dict[] = [];
-  if (graphOrganization.diagnostic) diagnostics.push(graphOrganization.diagnostic);
-
-  const dependencies: ProjectDependencies = {
-    analysis: ["astra.yaml"],
-    selection: universePath ? [universePath] : [],
-    materialization: [],
-    organization: graphOrganization.path ? [graphOrganization.path] : [],
-  };
-
-  const visit = async (
-    analysis: Dict,
-    directory: string,
-    path: string[],
-    activeUniverse: Dict,
-    parent: string | null,
-  ): Promise<void> => {
-    const scopeId = path.join(".");
-    const astraVersion = analysis.version;
-    if (typeof astraVersion === "string" && !astraVersion.startsWith("0.0.")) {
-      diagnostics.push({
-        severity: "warning",
-        code: "astra.version.compatibility",
-        path: scopeId,
-        message:
-          `ASTRA version "${astraVersion}" is outside this viewer's `
-          + "tested 0.0.x compatibility range. The project is shown "
-          + "through the compatibility projector; validate it with a "
-          + "matching astra-tools release.",
-      });
-    }
-    if ("authors" in analysis) {
-      diagnostics.push({
-        severity: "warning",
-        code: "astra.field.unprojected",
-        path: scopeId,
-        message:
-          'The "authors" field is not part of the current ASTRA '
-          + "viewer projection and is ignored. Publication authorship "
-          + "belongs in the external publication metadata.",
-      });
-    }
-    const childRefs = asDict(analysis.analyses) ?? {};
-    const childIds = Object.keys(childRefs).map((childId) => [...path, childId].join("."));
-    const records: LegacyRecord[] = [];
-
-    const inputs = analysis.inputs;
-    if (Array.isArray(inputs)) {
-      for (const item of inputs) {
-        const entry = asDict(item);
-        if (!entry || typeof entry.id !== "string") continue;
-        const record: LegacyRecord = {
-          id: entry.id,
-          path: recordPath(path, "inputs", entry.id),
-          kind: "input",
-        };
-        if (entry.type != null) record.type = entry.type;
-        if (entry.label != null) record.label = entry.label;
-        if (entry.description != null) record.description = entry.description;
-        if (entry.source != null) record.source = entry.source;
-        if (entry.from != null) record.from = entry.from;
-        records.push(record);
-      }
-    }
-
-    const decisions = asDict(analysis.decisions);
-    const selected = asDict(activeUniverse.decisions) ?? {};
-    if (decisions) {
-      for (const [decisionId, rawItem] of Object.entries(decisions)) {
-        const item = asDict(rawItem);
-        if (!item) continue;
-        const options = asDict(item.options) ?? {};
-        const insights = optionInsights(options);
-        const active = decisionActive(item, selected);
-        const record: LegacyRecord = {
-          id: decisionId,
-          path: recordPath(path, "decisions", decisionId),
-          kind: "decision",
-          active,
-        };
-        if (item.label != null) record.label = item.label;
-        if (item.rationale != null) record.rationale = item.rationale;
-        if (item.from != null) record.from = item.from;
-        if (item.when != null) record.when = item.when;
-        const selectedOption = active
-          ? (selected[decisionId] ?? item.default)
-          : null;
-        if (selectedOption != null) record.selected = selectedOption;
-        record.options = Object.fromEntries(
-          Object.entries(options).map(([optionId, option]) => [
-            optionId,
-            asDict(option)?.label ?? optionId,
-          ]),
-        );
-        if (insights) record.option_insights = insights;
-        if (item.tags != null) record.tags = item.tags;
-        records.push(record);
-      }
-    }
-
-    const outputs = analysis.outputs;
-    if (Array.isArray(outputs)) {
-      for (const item of outputs) {
-        const entry = asDict(item);
-        if (!entry || typeof entry.id !== "string") continue;
-        const outputId = entry.id;
-        const canonical = recordPath(path, "outputs", outputId);
-        const artifact = await discoverArtifact(
-          access,
-          directory,
-          universeId,
-          outputId,
-          String(entry.type ?? ""),
-        );
-        const artifactRelative = artifact && !isExternalPath(artifact) ? artifact : undefined;
-        const mediaType = artifactRelative ? mediaTypeFor(artifactRelative) : undefined;
-        const resourceId = artifactRelative
-          ? `resource:${scopeId || "root"}:output:${outputId}`
-          : undefined;
-        const record: LegacyRecord = {
-          id: outputId,
-          path: canonical,
-          kind: "output",
-        };
-        if (entry.type != null) record.type = entry.type;
-        if (entry.label != null) record.label = entry.label;
-        if (entry.description != null) record.description = entry.description;
-        if (entry.from != null) record.from = entry.from;
-        if (entry.inputs != null) record.inputs = entry.inputs;
-        if (entry.decisions != null) record.decisions = entry.decisions;
-        if (entry.recipe != null) record.recipe = entry.recipe;
-        if (entry.metric != null) record.metric = entry.metric;
-        if (artifactRelative) {
-          record.resolved_path = artifactRelative;
-          record.mediaType = mediaType;
-          record.available = true;
-          record.resourceIds = [resourceId];
-        }
-        records.push(record);
-        if (artifactRelative && resourceId) {
-          const stat = await access.stat(artifactRelative);
-          if (stat) {
-            artifacts.push({
-              id: resourceId,
-              recordId: canonical,
-              recordPath: canonical,
-              path: artifactRelative,
-              mediaType: mediaType!,
-              size: stat.size,
-              revision: (await sha256Hex([
-                encoder.encode(`${artifactRelative}:${mtimeNsOf(stat)}:${stat.size}`),
-              ])).slice(0, 16),
-              availability: "available",
-              source: "inferred",
-            });
-            dependencies.materialization.push(artifactRelative);
-          }
-        }
-      }
-    }
-
-    for (const [collection, kind] of [
-      ["findings", "finding"],
-      ["prior_insights", "prior_insight"],
-    ] as const) {
-      const values = asDict(analysis[collection]);
-      if (!values) continue;
-      for (const [recordId, rawItem] of Object.entries(values)) {
-        const item = asDict(rawItem);
-        if (!item) continue;
-        const evidence = extractEvidence(item.evidence);
-        const record: LegacyRecord = {
-          id: recordId,
-          path: recordPath(path, collection, recordId),
-          kind,
-        };
-        if (item.label != null) record.label = item.label;
-        if (item.claim != null) record.claim = item.claim;
-        if (item.notes != null) record.notes = item.notes;
-        if (item.scope != null) record.scope = item.scope;
-        record.evidence = evidence;
-        if (kind === "prior_insight") {
-          const doi = firstEvidenceValue(evidence, "doi");
-          const quote = firstEvidenceValue(evidence, "quote");
-          const page = firstEvidenceValue(evidence, "page");
-          if (doi != null) record.doi = doi;
-          if (quote != null) record.quote = quote;
-          if (page != null) record.page = page;
-        }
-        records.push(record);
-      }
-    }
-
-    scopes.push({
-      id: scopeId,
-      path: scopeId,
-      name: String(
-        path.length
-          ? (analysis.name ?? analysis.id ?? path[path.length - 1])
-          : (analysis.name ?? analysis.id ?? "ASTRA analysis"),
-      ),
-      parent,
-      children: childIds,
-      records,
-    });
-
-    for (const [childId, rawReference] of Object.entries(childRefs)) {
-      const reference = asDict(rawReference);
-      if (!reference) continue;
-      let child = reference;
-      let childDirectory = directory;
-      const declaredPath = asString(reference.path);
-      if (declaredPath) {
-        let location = joinPath(directory, declaredPath);
-        const stat = await access.stat(location);
-        if (stat?.type === "directory") {
-          location = joinPath(location, "astra.yaml");
-        }
-        child = await loadYamlDict(access, location);
-        // A path reference may carry local display metadata; let it override
-        // the loaded document without retaining the transport-only path field.
-        for (const [key, value] of Object.entries(reference)) {
-          if (key !== "path") child[key] = value;
-        }
-        childDirectory = dirname(location);
-        dependencies.analysis.push(location);
-      }
-      await visit(
-        child,
-        childDirectory,
-        [...path, childId],
-        scopeUniverse(activeUniverse, childId),
-        scopeId,
-      );
-    }
-  };
-
-  await visit(rootAnalysis, "", [], universe, null);
-  attachOutputProvenance(scopes);
-
-  return {
-    rootAnalysis,
-    scopes,
-    artifacts,
-    diagnostics,
-    universeId,
-    availableUniverses: available,
-    graphOrganization,
-    dependencies,
-  };
-}
-
-/**
- * Attach the flattened provenance consumed by ASTRA result viewers:
- * `inputs_root` (analysis-level inputs at the roots of the upstream output
- * chain) and `decisions_transitive` (every decision on that chain, with `via`
- * naming the owning scope when it is not the output's own).
- */
-function attachOutputProvenance(scopes: LegacyScope[]): void {
-  const scopesById = new Map(scopes.map((scope) => [scope.id, scope]));
-
-  const recordsOfKind = (scope: LegacyScope, kind: string): LegacyRecord[] =>
-    scope.records.filter((record) => record.kind === kind);
-
-  const recordById = (
-    scope: LegacyScope,
-    kind: string,
-    recordId: string,
-  ): LegacyRecord | undefined =>
-    recordsOfKind(scope, kind).find((record) => record.id === recordId);
-
-  const parentScope = (scope: LegacyScope): LegacyScope | undefined =>
-    scope.parent != null ? scopesById.get(scope.parent) : undefined;
-
-  const childScope = (scope: LegacyScope, childId: string): LegacyScope | undefined => {
-    const qualified = [scope.id, childId].filter(Boolean).join(".");
-    const child = scopesById.get(qualified);
-    return child && scope.children.includes(child.id) ? child : undefined;
-  };
-
-  const resolveOutputPath = (
-    reference: string,
-    scope: LegacyScope,
-  ): [LegacyRecord, LegacyScope] | undefined => {
-    const parts = reference.split(".");
-    if (parts.length < 2 || parts.some((part) => !part)) return undefined;
-    let base: LegacyScope | undefined = scope;
-    while (base) {
-      let owner: LegacyScope = base;
-      let complete = true;
-      for (const segment of parts.slice(0, -1)) {
-        const child = childScope(owner, segment);
-        if (!child) {
-          complete = false;
-          break;
-        }
-        owner = child;
-      }
-      if (complete) {
-        const output = recordById(owner, "output", parts[parts.length - 1]!);
-        if (output) return [output, owner];
-      }
-      base = parentScope(base);
-    }
-    return undefined;
-  };
-
-  const traceOutput = (
-    output: LegacyRecord,
-    pageScope: LegacyScope,
-  ): [Dict[], Dict[]] => {
-    const decisions = new Map<string, Dict>();
-    const roots = new Map<string, Dict>();
-    const seen = new Set<string>();
-    const pageScopeId = pageScope.id || "";
-
-    const addDecision = (decisionId: string, scope: LegacyScope): void => {
-      let owner = scope;
-      let decision = recordById(owner, "decision", decisionId);
-      // Decision aliases may climb through more than one ancestor.
-      while (decision) {
-        let reference = decision.from;
-        if (typeof reference !== "string" || !reference.startsWith("../")) break;
-        while (typeof reference === "string" && reference.startsWith("../")) {
-          const parent = parentScope(owner);
-          if (!parent) break;
-          owner = parent;
-          reference = reference.slice(3);
-        }
-        decisionId = reference as string;
-        decision = recordById(owner, "decision", decisionId);
-      }
-
-      const ownerId = owner.id || "";
-      const via = ownerId === pageScopeId ? undefined : (ownerId || "root");
-      const selectedValue = decision?.selected;
-      const options = asDict(decision?.options);
-      const selection = options && typeof selectedValue === "string"
-        ? options[selectedValue]
-        : selectedValue;
-      const dependency: Dict = { id: decisionId };
-      if (decision?.label != null) dependency.label = decision.label;
-      if (selection != null) dependency.selection = selection;
-      if (via != null) dependency.via = via;
-
-      const previous = decisions.get(decisionId);
-      // A dependency owned by the page scope is the most specific form.
-      // Otherwise retain the first traversal hit for stable ordering.
-      if (previous && (!("via" in previous) || "via" in dependency)) return;
-      decisions.set(decisionId, dependency);
-    };
-
-    const addRoot = (inputRecord: LegacyRecord | string, scope: LegacyScope): void => {
-      let inputId: string;
-      let label: unknown;
-      let reference: unknown;
-      if (typeof inputRecord === "string") {
-        inputId = inputRecord;
-        label = undefined;
-        reference = undefined;
-      } else {
-        if (typeof inputRecord.id !== "string") return;
-        inputId = inputRecord.id;
-        label = inputRecord.label;
-        reference = inputRecord.from;
-      }
-
-      let owner = scope;
-      while (
-        typeof reference === "string"
-        && !reference.includes(".")
-        && parentScope(owner)
-      ) {
-        owner = parentScope(owner)!;
-        const source = recordById(owner, "input", reference);
-        if (!source) break;
-        inputId = source.id;
-        label = label ?? source.label;
-        reference = source.from;
-      }
-
-      if (!roots.has(inputId)) {
-        const root: Dict = { id: inputId };
-        if (label != null) root.label = label;
-        roots.set(inputId, root);
-      }
-    };
-
-    const trace = (current: LegacyRecord, scope: LegacyScope): void => {
-      const key = `${scope.id || ""}::${current.id}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-
-      const alias = current.from;
-      if (typeof alias === "string") {
-        const resolved = resolveOutputPath(alias, scope);
-        if (!resolved) return;
-        trace(...resolved);
-        return;
-      }
-
-      const directDecisions = current.decisions;
-      if (Array.isArray(directDecisions)) {
-        for (const decisionId of directDecisions) {
-          if (typeof decisionId === "string") addDecision(decisionId, scope);
-        }
-      }
-
-      const inputs = current.inputs;
-      if (!Array.isArray(inputs)) return;
-      for (const reference of inputs) {
-        if (typeof reference !== "string") continue;
-        if (reference.includes(".")) {
-          const resolved = resolveOutputPath(reference, scope);
-          if (resolved) trace(...resolved);
-          else addRoot(reference, scope);
-          continue;
-        }
-
-        const inputRecord = recordById(scope, "input", reference);
-        if (inputRecord) {
-          const source = inputRecord.from;
-          if (typeof source === "string" && source.includes(".")) {
-            const resolved = resolveOutputPath(source, scope);
-            if (resolved) trace(...resolved);
-            else addRoot(inputRecord, scope);
-          } else {
-            addRoot(inputRecord, scope);
-          }
-          continue;
-        }
-
-        const sameScopeOutput = recordById(scope, "output", reference);
-        if (sameScopeOutput) trace(sameScopeOutput, scope);
-        else addRoot(reference, scope);
-      }
-    };
-
-    trace(output, pageScope);
-    return [[...roots.values()], [...decisions.values()]];
-  };
-
-  for (const scope of scopes) {
-    for (const output of recordsOfKind(scope, "output")) {
-      const [inputsRoot, decisionsTransitive] = traceOutput(output, scope);
-      output.inputs_root = inputsRoot;
-      output.decisions_transitive = decisionsTransitive;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Canonical projection (the adapter formerly known as legacy.ts).
-// ---------------------------------------------------------------------------
-
 const KINDS_INPUT_OUTPUT = ["input", "output"] as const;
 const KINDS_DECISION = ["decision"] as const;
 const KINDS_OUTPUT = ["output"] as const;
 const KINDS_INSIGHT = ["prior_insight"] as const;
 
-function viewOutputType(value: unknown): string {
-  return typeof value === "string" && OUTPUT_TYPES.has(value) ? value : "other";
+interface PendingAlias {
+  recordId: string;
+  scopeId: string;
+  reference: string;
+  targetKinds: readonly AstraRecordKind[];
+}
+
+interface PendingEvidenceArtifact {
+  recordId: string;
+  scopeId: string;
+  evidenceIndex: number;
+  reference: string;
+}
+
+interface AuthoredOutputReferences {
+  scopeId: string;
+  inputs: string[];
+  decisions: string[];
+  alias?: string;
+}
+
+interface ProjectStructures {
+  rootAnalysis: Dict;
+  scopes: ProjectScopeView[];
+  records: ProjectRecordView[];
+  resources: ResourceDescriptor[];
+  artifacts: ArtifactBinding[];
+  diagnostics: ViewModelDiagnostic[];
+  aliases: PendingAlias[];
+  evidenceArtifacts: PendingEvidenceArtifact[];
+  optionInsights: Map<string, ReadonlyMap<string, readonly string[]>>;
+  outputs: Map<string, AuthoredOutputReferences>;
+  universeId: string;
+  universePath?: string;
+  availableUniverses: string[];
+  graphOrganization: GraphOrganizationResult;
+  dependencies: ProjectDependencies;
+}
+
+interface ProjectionIndex {
+  scopeById: ReadonlyMap<string, ProjectScopeView>;
+  scopeByPath: ReadonlyMap<string, ProjectScopeView>;
+  recordById: ReadonlyMap<string, ProjectRecordView>;
+  recordByPath: ReadonlyMap<string, ProjectRecordView>;
+  recordsByScopeAndLocalId: ReadonlyMap<string, readonly ProjectRecordView[]>;
+}
+
+function scopeId(path: readonly string[]): string {
+  return path.length ? path.join(".") : "root";
+}
+
+function viewOutputType(value: unknown): OutputRecordView["outputType"] {
+  if (value === "data") return "dataset";
+  return typeof value === "string" && OUTPUT_TYPES.has(value)
+    ? value as OutputRecordView["outputType"]
+    : "other";
 }
 
 function resourceKind(value: unknown): ResourceDescriptor["kind"] {
@@ -952,503 +493,780 @@ function resourceKind(value: unknown): ResourceDescriptor["kind"] {
   return "other";
 }
 
-function normalizedScopeId(scopeId: string): string {
-  return scopeId || "root";
+function modelRecordId(
+  ownerScopeId: string,
+  kind: AstraRecordKind,
+  localId: string,
+): string {
+  return `${ownerScopeId}:${kind}:${localId}`;
 }
 
-function localRecordId(path: string): string {
-  const parts = path.split(".");
-  return parts[parts.length - 1] ?? path;
+function addRelation(
+  record: ProjectRecordView,
+  relation: RecordRelation,
+): void {
+  const existing = record.relations.find(
+    (candidate) =>
+      candidate.kind === relation.kind
+      && candidate.targetRecordId === relation.targetRecordId,
+  );
+  if (!existing) {
+    record.relations.push(relation);
+  } else if (existing.direct === false && relation.direct !== false) {
+    existing.direct = relation.direct;
+  }
 }
 
-function parentScopePath(path: string): string {
-  const segments = path.split(".").filter(Boolean);
-  segments.pop();
-  return segments.join(".");
+function createProjectionIndex(structures: ProjectStructures): ProjectionIndex {
+  const scopeById = new Map(structures.scopes.map((scope) => [scope.id, scope]));
+  const scopeByPath = new Map(
+    structures.scopes.map((scope) => [scope.canonicalPath, scope]),
+  );
+  const recordById = new Map(structures.records.map((record) => [record.id, record]));
+  const recordByPath = new Map(
+    structures.records.map((record) => [record.canonicalPath, record]),
+  );
+  const recordsByScopeAndLocalId = new Map<string, ProjectRecordView[]>();
+  for (const record of structures.records) {
+    const key = `${record.scopeId}\0${record.localId}`;
+    const matches = recordsByScopeAndLocalId.get(key) ?? [];
+    matches.push(record);
+    recordsByScopeAndLocalId.set(key, matches);
+  }
+  return {
+    scopeById,
+    scopeByPath,
+    recordById,
+    recordByPath,
+    recordsByScopeAndLocalId,
+  };
 }
 
-function legacyEvidence(record: LegacyRecord): Dict[] {
-  const evidence = record.evidence;
-  if (Array.isArray(evidence) && evidence.length) {
-    return evidence.map((item) => {
-      const source = item as Dict;
-      const entry: Dict = {};
-      if (source.artifact) entry.artifactRecordId = source.artifact;
-      if (source.doi) entry.doi = source.doi;
-      if (source.quote) entry.quote = source.quote;
-      if ("page" in source) entry.page = source.page;
-      return entry;
+function resolveReference(
+  index: ProjectionIndex,
+  sourceScopeId: string,
+  rawReference: string,
+  targetKinds: readonly AstraRecordKind[],
+): ProjectRecordView | undefined {
+  let reference = rawReference.trim();
+  if (!reference) return undefined;
+
+  const exact = index.recordByPath.get(reference);
+  if (exact && targetKinds.includes(exact.kind)) return exact;
+
+  let owner = index.scopeById.get(sourceScopeId);
+  while (reference.startsWith("../")) {
+    if (!owner?.parentId) return undefined;
+    owner = index.scopeById.get(owner.parentId);
+    reference = reference.slice(3);
+  }
+  if (reference.startsWith("./")) reference = reference.slice(2);
+  if (!owner || !reference) return undefined;
+
+  const segments = reference.split(".").filter(Boolean);
+  if (segments.length > 1) {
+    const qualifiedScopePath = segments.slice(0, -1).join(".");
+    const qualifiedScope = index.scopeByPath.get(qualifiedScopePath)
+      ?? index.scopeById.get(qualifiedScopePath);
+    if (qualifiedScope) {
+      const key = `${qualifiedScope.id}\0${segments[segments.length - 1]}`;
+      const matches = (index.recordsByScopeAndLocalId.get(key) ?? [])
+        .filter((record) => targetKinds.includes(record.kind));
+      return matches.length === 1 ? matches[0] : undefined;
+    }
+  }
+
+  while (owner) {
+    const prefix = owner.canonicalPath === "root" ? "" : `${owner.canonicalPath}.`;
+    const relative = index.recordByPath.get(`${prefix}${reference}`);
+    if (relative && targetKinds.includes(relative.kind)) return relative;
+
+    const localId = segments[segments.length - 1] ?? reference;
+    const key = `${owner.id}\0${localId}`;
+    const matches = (index.recordsByScopeAndLocalId.get(key) ?? [])
+      .filter((record) => targetKinds.includes(record.kind));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return undefined;
+    owner = owner.parentId ? index.scopeById.get(owner.parentId) : undefined;
+  }
+  return undefined;
+}
+
+function recipeDescriptor(value: unknown): OutputRecordView["recipe"] {
+  const recipe = asDict(value);
+  if (!recipe) return undefined;
+  const command = asString(recipe.command);
+  const container = asString(recipe.container);
+  return command || container ? { command, container } : undefined;
+}
+
+function metricDescriptor(value: unknown): OutputRecordView["metric"] {
+  const metric = asDict(value);
+  if (!metric) return undefined;
+  const result: NonNullable<OutputRecordView["metric"]> = {};
+  if (typeof metric.value === "string" || typeof metric.value === "number") {
+    result.value = metric.value;
+  }
+  if (typeof metric.uncertainty === "string" || typeof metric.uncertainty === "number") {
+    result.uncertainty = metric.uncertainty;
+  }
+  if (typeof metric.unit === "string") result.unit = metric.unit;
+  if (typeof metric.label === "string") result.label = metric.label;
+  return Object.keys(result).length ? result : undefined;
+}
+
+async function loadProjectStructures(
+  access: ProjectFileAccess,
+  options: ProjectViewOptions,
+): Promise<ProjectStructures> {
+  const rootStat = await access.stat("astra.yaml");
+  if (!rootStat) throw new Error("No astra.yaml found in the project root");
+
+  const rootAnalysis = await loadYamlDict(access, "astra.yaml");
+  const graphOrganization = await readGraphOrganization(access);
+  const { universe, path: universePath, available } = await readUniverse(
+    access,
+    options.universeId,
+  );
+  const universeId = String(universe.id ?? "default");
+  const scopes: ProjectScopeView[] = [];
+  const records: ProjectRecordView[] = [];
+  const resources: ResourceDescriptor[] = [];
+  const artifacts: ArtifactBinding[] = [];
+  const diagnostics: ViewModelDiagnostic[] = [];
+  const aliases: PendingAlias[] = [];
+  const evidenceArtifacts: PendingEvidenceArtifact[] = [];
+  const optionInsights = new Map<string, ReadonlyMap<string, readonly string[]>>();
+  const outputs = new Map<string, AuthoredOutputReferences>();
+  const dependencies: ProjectDependencies = {
+    analysis: ["astra.yaml"],
+    selection: universePath ? [universePath] : [],
+    materialization: [],
+    organization: graphOrganization.path ? [graphOrganization.path] : [],
+  };
+  if (graphOrganization.diagnostic) {
+    diagnostics.push({
+      severity: graphOrganization.diagnostic.severity as ViewModelDiagnostic["severity"],
+      code: String(graphOrganization.diagnostic.code),
+      message: String(graphOrganization.diagnostic.message),
+      ...(graphOrganization.diagnostic.path
+        ? { canonicalPath: String(graphOrganization.diagnostic.path) }
+        : {}),
     });
   }
-  if (!record.doi && !record.quote && !("page" in record)) return [];
-  const entry: Dict = {};
-  if (record.doi) entry.doi = record.doi;
-  if (record.quote) entry.quote = record.quote;
-  if ("page" in record) entry.page = record.page;
-  return [entry];
+
+  const visit = async (
+    analysis: Dict,
+    directory: string,
+    path: string[],
+    activeUniverse: Dict,
+    parentId?: string,
+  ): Promise<void> => {
+    const ownerScopeId = scopeId(path);
+    const ownerScopePath = path.length ? path.join(".") : "root";
+    const astraVersion = asString(analysis.version);
+    if (astraVersion && astraVersion !== "1.0" && astraVersion !== "1.0.0") {
+      throw new Error(
+        `Unsupported ASTRA version "${astraVersion}" at ${ownerScopePath}; expected 1.0 or 1.0.0.`,
+      );
+    }
+    if ("authors" in analysis) {
+      throw new Error(
+        `Unsupported ASTRA field "authors" at ${ownerScopePath}; publication authorship belongs in publication metadata.`,
+      );
+    }
+
+    const childRefs = asDict(analysis.analyses) ?? {};
+    const scope: ProjectScopeView = {
+      id: ownerScopeId,
+      canonicalPath: ownerScopePath,
+      name: String(
+        path.length
+          ? (analysis.name ?? analysis.id ?? path[path.length - 1])
+          : (analysis.name ?? analysis.id ?? "ASTRA analysis"),
+      ),
+      ...(typeof analysis.description === "string"
+        ? { description: analysis.description }
+        : {}),
+      ...(parentId ? { parentId } : {}),
+      childIds: Object.keys(childRefs).map((childId) => scopeId([...path, childId])),
+      recordIds: [],
+    };
+    scopes.push(scope);
+
+    const addRecord = (record: ProjectRecordView): void => {
+      records.push(record);
+      scope.recordIds.push(record.id);
+    };
+
+    for (const rawInput of Array.isArray(analysis.inputs) ? analysis.inputs : []) {
+      const input = asDict(rawInput);
+      const localId = asString(input?.id);
+      if (!input || !localId) continue;
+      const id = modelRecordId(ownerScopeId, "input", localId);
+      const record: InputRecordView = {
+        id,
+        localId,
+        canonicalPath: recordPath(path, "inputs", localId),
+        scopeId: ownerScopeId,
+        kind: "input",
+        ...(typeof input.label === "string" ? { label: input.label } : {}),
+        ...(typeof input.description === "string"
+          ? { description: input.description }
+          : {}),
+        ...(typeof input.type === "string" ? { inputType: input.type } : {}),
+        ...(typeof input.source === "string" ? { source: input.source } : {}),
+        ...(typeof input.ref === "string" ? { reference: input.ref } : {}),
+        relations: [],
+      };
+      addRecord(record);
+      if (typeof input.from === "string") {
+        aliases.push({
+          recordId: id,
+          scopeId: ownerScopeId,
+          reference: input.from,
+          targetKinds: KINDS_INPUT_OUTPUT,
+        });
+      }
+    }
+
+    const selected = asDict(activeUniverse.decisions) ?? {};
+    for (const [localId, rawDecision] of Object.entries(asDict(analysis.decisions) ?? {})) {
+      const decision = asDict(rawDecision);
+      if (!decision) continue;
+      const id = modelRecordId(ownerScopeId, "decision", localId);
+      const active = decisionActive(decision, selected);
+      const selectedOption = active
+        ? asString(selected[localId] ?? decision.default)
+        : undefined;
+      const authoredOptions = asDict(decision.options) ?? {};
+      const options: DecisionOptionView[] = [];
+      const insightsByOption = new Map<string, readonly string[]>();
+      for (const [optionId, rawOption] of Object.entries(authoredOptions)) {
+        const option = asDict(rawOption) ?? {};
+        const insightReferences = asStringArray(option.insights);
+        if (insightReferences.length) insightsByOption.set(optionId, insightReferences);
+        options.push({
+          id: optionId,
+          ...(typeof option.label === "string" ? { label: option.label } : {}),
+          ...(typeof option.description === "string"
+            ? { description: option.description }
+            : {}),
+          selected: optionId === selectedOption,
+          ...(typeof option.excluded === "boolean" ? { excluded: option.excluded } : {}),
+          ...(typeof option.excluded_reason === "string"
+            ? { exclusionReason: option.excluded_reason }
+            : {}),
+        });
+      }
+      const record: DecisionRecordView = {
+        id,
+        localId,
+        canonicalPath: recordPath(path, "decisions", localId),
+        scopeId: ownerScopeId,
+        kind: "decision",
+        ...(typeof decision.label === "string" ? { label: decision.label } : {}),
+        ...(typeof decision.rationale === "string"
+          ? { rationale: decision.rationale }
+          : {}),
+        ...(selectedOption ? { selectedOptionId: selectedOption } : {}),
+        ...(Array.isArray(decision.tags) ? { tags: asStringArray(decision.tags) } : {}),
+        active,
+        options,
+        relations: [],
+      };
+      addRecord(record);
+      if (insightsByOption.size) optionInsights.set(id, insightsByOption);
+      if (typeof decision.from === "string") {
+        aliases.push({
+          recordId: id,
+          scopeId: ownerScopeId,
+          reference: decision.from,
+          targetKinds: KINDS_DECISION,
+        });
+      }
+    }
+
+    for (const rawOutput of Array.isArray(analysis.outputs) ? analysis.outputs : []) {
+      const output = asDict(rawOutput);
+      const localId = asString(output?.id);
+      if (!output || !localId) continue;
+      const id = modelRecordId(ownerScopeId, "output", localId);
+      const canonicalPath = recordPath(path, "outputs", localId);
+      const artifactPath = await discoverArtifact(
+        access,
+        directory,
+        universeId,
+        localId,
+        String(output.type ?? ""),
+      );
+      const artifact = artifactPath && !isExternalPath(artifactPath)
+        ? artifactPath
+        : undefined;
+      const resourceId = artifact
+        ? `resource:${ownerScopeId}:output:${localId}`
+        : undefined;
+      const recipe = recipeDescriptor(output.recipe);
+      const metric = metricDescriptor(output.metric);
+      const record: OutputRecordView = {
+        id,
+        localId,
+        canonicalPath,
+        scopeId: ownerScopeId,
+        kind: "output",
+        ...(typeof output.label === "string" ? { label: output.label } : {}),
+        ...(typeof output.description === "string"
+          ? { description: output.description }
+          : {}),
+        outputType: viewOutputType(output.type),
+        ...(recipe ? { recipe } : {}),
+        resourceIds: resourceId ? [resourceId] : [],
+        provenance: { inputs: [], decisions: [] },
+        ...(metric ? { metric } : {}),
+        relations: [],
+      };
+      addRecord(record);
+      const alias = asString(output.from);
+      outputs.set(id, {
+        scopeId: ownerScopeId,
+        inputs: asStringArray(output.inputs),
+        decisions: asStringArray(output.decisions),
+        ...(alias ? { alias } : {}),
+      });
+      if (alias) {
+        aliases.push({
+          recordId: id,
+          scopeId: ownerScopeId,
+          reference: alias,
+          targetKinds: KINDS_OUTPUT,
+        });
+      }
+      if (artifact && resourceId) {
+        const stat = await access.stat(artifact);
+        if (stat) {
+          const revision = (await sha256Hex([
+            encoder.encode(`${artifact}:${mtimeNsOf(stat)}:${stat.size}`),
+          ])).slice(0, 16);
+          const mediaType = mediaTypeFor(artifact);
+          artifacts.push({
+            id: resourceId,
+            recordId: id,
+            recordPath: canonicalPath,
+            path: artifact,
+            mediaType,
+            size: stat.size,
+            revision,
+            availability: "available",
+            source: "inferred",
+          });
+          resources.push({
+            id: resourceId,
+            kind: resourceKind(output.type),
+            mediaType,
+            fileName: basename(artifact),
+            byteSize: stat.size,
+            revision,
+            availability: "available",
+            source: "inferred",
+            outputRecordId: id,
+          });
+          dependencies.materialization.push(artifact);
+        }
+      }
+    }
+
+    for (const [collection, kind] of [
+      ["findings", "finding"],
+      ["prior_insights", "prior_insight"],
+    ] as const) {
+      for (const [localId, rawInsight] of Object.entries(asDict(analysis[collection]) ?? {})) {
+        const insight = asDict(rawInsight);
+        if (!insight) continue;
+        const id = modelRecordId(ownerScopeId, kind, localId);
+        const evidence: EvidenceDescriptor[] = [];
+        for (const rawEvidence of extractEvidence(insight.evidence)) {
+          const descriptor: EvidenceDescriptor = {
+            ...(typeof rawEvidence.doi === "string" ? { doi: rawEvidence.doi } : {}),
+            ...(typeof rawEvidence.quote === "string" ? { quote: rawEvidence.quote } : {}),
+            ...(typeof rawEvidence.page === "number" ? { page: rawEvidence.page } : {}),
+          };
+          const evidenceIndex = evidence.push(descriptor) - 1;
+          if (typeof rawEvidence.artifact === "string") {
+            evidenceArtifacts.push({
+              recordId: id,
+              scopeId: ownerScopeId,
+              evidenceIndex,
+              reference: rawEvidence.artifact,
+            });
+          }
+        }
+        const common = {
+          id,
+          localId,
+          canonicalPath: recordPath(path, collection, localId),
+          scopeId: ownerScopeId,
+          ...(typeof insight.label === "string" ? { label: insight.label } : {}),
+          ...(typeof insight.claim === "string" ? { claim: insight.claim } : {}),
+          ...(typeof insight.notes === "string" ? { notes: insight.notes } : {}),
+          ...(Array.isArray(insight.tags) ? { tags: asStringArray(insight.tags) } : {}),
+          evidence,
+          relations: [],
+        };
+        const record: FindingRecordView | PriorInsightRecordView = kind === "finding"
+          ? { ...common, kind: "finding" }
+          : { ...common, kind: "prior_insight" };
+        addRecord(record);
+      }
+    }
+
+    for (const [childId, rawReference] of Object.entries(childRefs)) {
+      const reference = asDict(rawReference);
+      if (!reference) continue;
+      let child = reference;
+      let childDirectory = directory;
+      const declaredPath = asString(reference.path);
+      if (declaredPath) {
+        let location = joinPath(directory, declaredPath);
+        const stat = await access.stat(location);
+        if (stat?.type === "directory") location = joinPath(location, "astra.yaml");
+        child = await loadYamlDict(access, location);
+        for (const [key, value] of Object.entries(reference)) {
+          if (key !== "path") child[key] = value;
+        }
+        childDirectory = dirname(location);
+        dependencies.analysis.push(location);
+      }
+      await visit(
+        child,
+        childDirectory,
+        [...path, childId],
+        scopeUniverse(activeUniverse, childId),
+        ownerScopeId,
+      );
+    }
+  };
+
+  await visit(rootAnalysis, "", [], universe);
+  return {
+    rootAnalysis,
+    scopes,
+    records,
+    resources,
+    artifacts,
+    diagnostics,
+    aliases,
+    evidenceArtifacts,
+    optionInsights,
+    outputs,
+    universeId,
+    ...(universePath ? { universePath } : {}),
+    availableUniverses: available,
+    graphOrganization,
+    dependencies,
+  };
 }
 
-function projectCanonicalModel(
-  structures: LoadedStructures,
+function addUnresolvedDiagnostic(
+  structures: ProjectStructures,
+  record: ProjectRecordView,
+  relationKind: string,
+  reference: string,
+): void {
+  structures.diagnostics.push({
+    severity: "warning",
+    code: "unresolved_relation",
+    message:
+      `Could not uniquely resolve ${relationKind} reference `
+      + `"${reference}" from ${record.canonicalPath}.`,
+    canonicalPath: record.canonicalPath,
+  });
+}
+
+function resolveCanonicalReferences(structures: ProjectStructures): ProjectionIndex {
+  const index = createProjectionIndex(structures);
+
+  for (const alias of structures.aliases) {
+    const record = index.recordById.get(alias.recordId);
+    if (!record) continue;
+    const target = resolveReference(
+      index,
+      alias.scopeId,
+      alias.reference,
+      alias.targetKinds,
+    );
+    if (target) {
+      addRelation(record, {
+        kind: "aliases",
+        targetRecordId: target.id,
+        direct: true,
+      });
+    } else {
+      addUnresolvedDiagnostic(structures, record, "aliases", alias.reference);
+    }
+  }
+
+  for (const pending of structures.evidenceArtifacts) {
+    const record = index.recordById.get(pending.recordId);
+    if (!record || (record.kind !== "finding" && record.kind !== "prior_insight")) {
+      continue;
+    }
+    const target = resolveReference(
+      index,
+      pending.scopeId,
+      pending.reference,
+      KINDS_OUTPUT,
+    );
+    if (target) {
+      const evidence = record.evidence[pending.evidenceIndex];
+      if (evidence) evidence.artifactRecordId = target.id;
+      addRelation(record, {
+        kind: "evidenced_by",
+        targetRecordId: target.id,
+        direct: true,
+      });
+    } else {
+      addUnresolvedDiagnostic(structures, record, "evidenced_by", pending.reference);
+    }
+  }
+
+  for (const [recordId, insightsByOption] of structures.optionInsights) {
+    const record = index.recordById.get(recordId);
+    if (record?.kind !== "decision") continue;
+    for (const option of record.options) {
+      const references = insightsByOption.get(option.id) ?? [];
+      const resolved: string[] = [];
+      for (const reference of references) {
+        const insight = resolveReference(index, record.scopeId, reference, KINDS_INSIGHT);
+        if (insight) {
+          resolved.push(insight.id);
+          addRelation(record, {
+            kind: "informed_by",
+            targetRecordId: insight.id,
+            direct: true,
+          });
+        } else {
+          structures.diagnostics.push({
+            severity: "warning",
+            code: "unresolved_option_insight",
+            message:
+              `Could not uniquely resolve option insight `
+              + `"${reference}" from ${record.canonicalPath}.`,
+            canonicalPath: record.canonicalPath,
+          });
+        }
+      }
+      if (resolved.length) option.insightRecordIds = resolved;
+    }
+  }
+
+  return index;
+}
+
+function selectedOptionLabel(record: DecisionRecordView): string | undefined {
+  const selected = record.options.find((option) => option.id === record.selectedOptionId);
+  return selected?.label ?? record.selectedOptionId;
+}
+
+function aliasedTarget(
+  index: ProjectionIndex,
+  record: ProjectRecordView,
+): ProjectRecordView {
+  const seen = new Set<string>();
+  let current = record;
+  while (!seen.has(current.id)) {
+    seen.add(current.id);
+    const relation = current.relations.find((candidate) => candidate.kind === "aliases");
+    const target = relation ? index.recordById.get(relation.targetRecordId) : undefined;
+    if (!target) break;
+    current = target;
+  }
+  return current;
+}
+
+function traceOutputProvenance(
+  structures: ProjectStructures,
+  index: ProjectionIndex,
+  output: OutputRecordView,
+): { inputs: ProvenanceReference[]; decisions: ProvenanceReference[] } {
+  const roots = new Map<string, ProvenanceReference>();
+  const decisions = new Map<string, ProvenanceReference>();
+  const seen = new Set<string>();
+
+  const addDecision = (record: DecisionRecordView): void => {
+    const target = aliasedTarget(index, record);
+    if (target.kind !== "decision") return;
+    const entry: ProvenanceReference = {
+      reference: target.localId,
+      recordId: target.id,
+      ...(target.label ? { label: target.label } : {}),
+      ...(target.scopeId !== output.scopeId ? { scopeId: target.scopeId } : {}),
+      ...(selectedOptionLabel(target) ? { selection: selectedOptionLabel(target) } : {}),
+      direct: false,
+    };
+    const previous = decisions.get(target.id);
+    if (!previous || (previous.scopeId && !entry.scopeId)) decisions.set(target.id, entry);
+  };
+
+  const addRoot = (record: ProjectRecordView | undefined, reference: string): void => {
+    const target = record ? aliasedTarget(index, record) : undefined;
+    if (target?.kind === "output") {
+      trace(target);
+      return;
+    }
+    const key = target?.id ?? reference;
+    if (!roots.has(key)) {
+      roots.set(key, {
+        reference: target?.localId ?? reference,
+        ...(target ? { recordId: target.id } : {}),
+        ...(target?.label ? { label: target.label } : {}),
+        direct: false,
+      });
+    }
+  };
+
+  const trace = (current: OutputRecordView): void => {
+    if (seen.has(current.id)) return;
+    seen.add(current.id);
+    const authored = structures.outputs.get(current.id);
+    if (!authored) return;
+    if (authored.alias) {
+      const target = resolveReference(index, authored.scopeId, authored.alias, KINDS_OUTPUT);
+      if (target?.kind === "output") trace(target);
+      return;
+    }
+    for (const reference of authored.decisions) {
+      const decision = resolveReference(index, authored.scopeId, reference, KINDS_DECISION);
+      if (decision?.kind === "decision") addDecision(decision);
+    }
+    for (const reference of authored.inputs) {
+      const input = resolveReference(index, authored.scopeId, reference, KINDS_INPUT_OUTPUT);
+      if (input?.kind === "output") trace(input);
+      else addRoot(input, reference);
+    }
+  };
+
+  trace(output);
+  return { inputs: [...roots.values()], decisions: [...decisions.values()] };
+}
+
+function attachOutputProvenance(
+  structures: ProjectStructures,
+  index: ProjectionIndex,
+): void {
+  for (const record of structures.records) {
+    if (record.kind !== "output") continue;
+    const authored = structures.outputs.get(record.id);
+    if (!authored) continue;
+    const directInputs: ProvenanceReference[] = authored.inputs.map((reference) => {
+      const target = resolveReference(index, authored.scopeId, reference, KINDS_INPUT_OUTPUT);
+      if (!target) addUnresolvedDiagnostic(structures, record, "depends_on", reference);
+      return {
+        reference,
+        ...(target ? { recordId: target.id } : {}),
+        direct: true,
+      };
+    });
+    const directDecisions: ProvenanceReference[] = authored.decisions.map((reference) => {
+      const target = resolveReference(index, authored.scopeId, reference, KINDS_DECISION);
+      if (!target) addUnresolvedDiagnostic(structures, record, "parameterized_by", reference);
+      const decision = target?.kind === "decision" ? target : undefined;
+      return {
+        reference,
+        ...(decision ? { recordId: decision.id } : {}),
+        ...(decision?.label ? { label: decision.label } : {}),
+        ...(decision && selectedOptionLabel(decision)
+          ? { selection: selectedOptionLabel(decision) }
+          : {}),
+        direct: true,
+      };
+    });
+    const transitive = traceOutputProvenance(structures, index, record);
+    const directInputIds = new Set(directInputs.flatMap((entry) => entry.recordId ?? []));
+    const directDecisionIds = new Set(
+      directDecisions.flatMap((entry) => entry.recordId ?? []),
+    );
+    record.provenance = {
+      inputs: [
+        ...directInputs,
+        ...transitive.inputs.filter(
+          (entry) => !entry.recordId || !directInputIds.has(entry.recordId),
+        ),
+      ],
+      decisions: [
+        ...directDecisions,
+        ...transitive.decisions.filter(
+          (entry) => !entry.recordId || !directDecisionIds.has(entry.recordId),
+        ),
+      ],
+    };
+    for (const entry of record.provenance.inputs) {
+      if (entry.recordId) {
+        addRelation(record, {
+          kind: "depends_on",
+          targetRecordId: entry.recordId,
+          direct: entry.direct,
+        });
+      }
+    }
+    for (const entry of record.provenance.decisions) {
+      if (entry.recordId) {
+        addRelation(record, {
+          kind: "parameterized_by",
+          targetRecordId: entry.recordId,
+          direct: entry.direct,
+        });
+      }
+    }
+  }
+}
+
+function createProjectModel(
+  structures: ProjectStructures,
   revisions: ProjectRevisions,
 ): ProjectViewModelV1 {
-  const { scopes, rootAnalysis, universeId, availableUniverses } = structures;
-  const analysisRevision = revisions.analysis;
-  const selectionRevision = revisions.selection;
-
-  const resources: Dict[] = [];
-  const resourceIdSet = new Set<string>();
-  const records: Dict[] = [];
-  const selectedDecisions: Record<string, string> = {};
-  const adapterDiagnostics: Dict[] = [];
-
-  const scopeIdMap = new Map(scopes.map((scope) => [scope.id, normalizedScopeId(scope.id)]));
-  const legacyByModelId = new Map<string, LegacyRecord>();
-  const modelIdByPath = new Map<string, string>();
-  const candidatesByScopeAndLocalId = new Map<string, string[]>();
-
-  for (const scope of scopes) {
-    const scopeId = normalizedScopeId(scope.id);
-    for (const record of scope.records) {
-      const modelId = `${scopeId}:${record.kind}:${record.id}`;
-      legacyByModelId.set(modelId, record);
-      modelIdByPath.set(record.path, modelId);
-      const key = `${scopeId}\0${localRecordId(record.path)}`;
-      const candidates = candidatesByScopeAndLocalId.get(key) ?? [];
-      candidates.push(modelId);
-      candidatesByScopeAndLocalId.set(key, candidates);
-    }
-  }
-
-  const resolveReference = (
-    sourceScope: LegacyScope,
-    rawReference: string,
-    targetKinds: readonly string[],
-  ): string | undefined => {
-    const exact = modelIdByPath.get(rawReference);
-    if (exact && targetKinds.includes(legacyByModelId.get(exact)!.kind)) {
-      return exact;
-    }
-
-    let reference = rawReference;
-    let targetScopePath = sourceScope.path;
-    while (reference.startsWith("../")) {
-      reference = reference.slice(3);
-      targetScopePath = parentScopePath(targetScopePath);
-    }
-
-    const candidatePaths: string[] = [];
-    let candidatePath = targetScopePath;
-    for (;;) {
-      candidatePaths.push(candidatePath);
-      if (!candidatePath) break;
-      candidatePath = parentScopePath(candidatePath);
-    }
-    let scopeCandidates = candidatePaths.flatMap((path) =>
-      scopes.filter((scope) =>
-        path
-          ? scope.path === path || scope.id === path
-          : scope.path === "" || scope.id === "",
-      ),
-    );
-
-    const qualifiedSegments = reference.split(".").filter(Boolean);
-    if (qualifiedSegments.length > 1) {
-      const recordId = qualifiedSegments[qualifiedSegments.length - 1]!;
-      const scopePath = qualifiedSegments.slice(0, -1).join(".");
-      const qualifiedScopes = scopes.filter(
-        (scope) => scope.path === scopePath || scope.id === scopePath,
-      );
-      if (qualifiedScopes.length) scopeCandidates = qualifiedScopes;
-      reference = recordId;
-    }
-
-    for (const scope of scopeCandidates) {
-      const key = `${normalizedScopeId(scope.id)}\0${reference}`;
-      const matches = (candidatesByScopeAndLocalId.get(key) ?? []).filter((modelId) =>
-        targetKinds.includes(legacyByModelId.get(modelId)!.kind),
-      );
-      if (matches.length === 1) return matches[0];
-      if (matches.length > 1) return undefined;
-    }
-    return undefined;
-  };
-
-  const resolvedRelation = (
-    sourceScope: LegacyScope,
-    sourceRecord: LegacyRecord,
-    kind: string,
-    rawReference: string,
-    targetKinds: readonly string[],
-    direct = true,
-  ): Dict | undefined => {
-    const targetRecordId = resolveReference(sourceScope, rawReference, targetKinds);
-    if (targetRecordId) return { kind, targetRecordId, direct };
-    adapterDiagnostics.push({
-      severity: "warning",
-      code: "legacy_unresolved_relation",
-      message:
-        `Could not uniquely resolve ${kind} reference `
-        + `"${rawReference}" from ${sourceRecord.path}.`,
-      canonicalPath: sourceRecord.path,
-    });
-    return undefined;
-  };
-
-  const findRootScope = (): LegacyScope | undefined =>
-    scopes.find((candidate) => !candidate.id && !candidate.path);
-  const findScopeByReference = (via: string): LegacyScope | undefined =>
-    scopes.find((candidate) => candidate.id === via || candidate.path === via);
-
-  for (const scope of scopes) {
-    const scopeId = normalizedScopeId(scope.id);
-    for (const record of scope.records) {
-      const recordId = `${scopeId}:${record.kind}:${record.id}`;
-      let recordResourceIds: string[] = [];
-      if (record.kind === "output") {
-        const declared = record.resourceIds;
-        if (Array.isArray(declared) && declared.length) {
-          recordResourceIds = [...declared] as string[];
-        } else if (record.resolved_path) {
-          recordResourceIds = [`resource:${recordId}`];
-        }
-      }
-      if (
-        record.kind === "output"
-        && record.resolved_path
-        && recordResourceIds.length
-        && !resourceIdSet.has(recordResourceIds[0]!)
-      ) {
-        const resourceId = recordResourceIds[0]!;
-        const fileName = basename(String(record.resolved_path));
-        const resource: Dict = {
-          id: resourceId,
-          kind: resourceKind(record.type),
-        };
-        if (fileName) resource.fileName = fileName;
-        if (record.mediaType) resource.mediaType = record.mediaType;
-        if ("byteSize" in record) resource.byteSize = record.byteSize;
-        if (record.resourceRevision) resource.revision = record.resourceRevision;
-        resource.availability = "available";
-        resource.source = "inferred";
-        resource.outputRecordId = recordId;
-        resources.push(resource);
-        resourceIdSet.add(resourceId);
-      }
-
-      const directRelations: (Dict | undefined)[] = [];
-      for (const reference of (record.inputs as unknown[] | undefined) ?? []) {
-        directRelations.push(
-          resolvedRelation(scope, record, "depends_on", String(reference), KINDS_INPUT_OUTPUT),
-        );
-      }
-      for (const item of (record.inputs_root as unknown[] | undefined) ?? []) {
-        directRelations.push(
-          resolvedRelation(
-            scope,
-            record,
-            "depends_on",
-            typeof item === "string" ? item : String((item as Dict).id),
-            KINDS_INPUT_OUTPUT,
-            false,
-          ),
-        );
-      }
-      for (const reference of (record.decisions as unknown[] | undefined) ?? []) {
-        directRelations.push(
-          resolvedRelation(scope, record, "parameterized_by", String(reference), KINDS_DECISION),
-        );
-      }
-      if (record.from) {
-        directRelations.push(
-          resolvedRelation(
-            scope,
-            record,
-            "aliases",
-            String(record.from),
-            record.kind === "input" ? KINDS_INPUT_OUTPUT : [record.kind],
-          ),
-        );
-      }
-      for (const item of (record.evidence as Dict[] | undefined) ?? []) {
-        if (item.artifact) {
-          directRelations.push(
-            resolvedRelation(scope, record, "evidenced_by", String(item.artifact), KINDS_OUTPUT),
-          );
-        }
-      }
-
-      const transitiveDecisionRelations: (Dict | undefined)[] = [];
-      if (record.kind === "output") {
-        for (const dependency of (record.decisions_transitive as Dict[] | undefined) ?? []) {
-          const via = dependency.via as string | undefined;
-          const owner = via === "root"
-            ? findRootScope()
-            : via
-              ? findScopeByReference(via)
-              : scope;
-          if (!owner) {
-            adapterDiagnostics.push({
-              severity: "warning",
-              code: "legacy_unresolved_relation_scope",
-              message: `Could not resolve decision scope "${via}" from ${record.path}.`,
-              canonicalPath: record.path,
-            });
-            continue;
-          }
-          transitiveDecisionRelations.push(
-            resolvedRelation(
-              owner,
-              record,
-              "parameterized_by",
-              String(dependency.id),
-              KINDS_DECISION,
-              false,
-            ),
-          );
-        }
-      }
-
-      const relationByTarget = new Map<string, Dict>();
-      for (const item of [...directRelations, ...transitiveDecisionRelations]) {
-        if (!item) continue;
-        const key = `${item.kind}\0${item.targetRecordId}`;
-        const previous = relationByTarget.get(key);
-        if (!previous || (previous.direct === false && item.direct !== false)) {
-          relationByTarget.set(key, item);
-        }
-      }
-      const relations = [...relationByTarget.values()];
-
-      let outputProvenance: Dict | undefined;
-      if (record.kind === "output") {
-        const directInputRecordIds = new Set<string>();
-        const inputs: Dict[] = [];
-        for (const reference of (record.inputs as unknown[] | undefined) ?? []) {
-          const resolved = resolveReference(scope, String(reference), KINDS_INPUT_OUTPUT);
-          if (resolved) directInputRecordIds.add(resolved);
-          const entry: Dict = { reference };
-          if (resolved) entry.recordId = resolved;
-          entry.direct = true;
-          inputs.push(entry);
-        }
-        for (const item of (record.inputs_root as unknown[] | undefined) ?? []) {
-          const reference = typeof item === "string" ? item : String((item as Dict).id);
-          const resolved = resolveReference(scope, reference, KINDS_INPUT_OUTPUT);
-          if (resolved && directInputRecordIds.has(resolved)) continue;
-          const entry: Dict = { reference };
-          if (resolved) entry.recordId = resolved;
-          if (typeof item !== "string" && (item as Dict).label) {
-            entry.label = (item as Dict).label;
-          }
-          entry.direct = false;
-          inputs.push(entry);
-        }
-
-        const directDecisionRecordIds = new Set<string>();
-        const decisionsProvenance: Dict[] = [];
-        const declaredDecisions = (record.decisions as unknown[] | undefined) ?? [];
-        const transitive = (record.decisions_transitive as Dict[] | undefined) ?? [];
-        for (const reference of declaredDecisions) {
-          const resolved = resolveReference(scope, String(reference), KINDS_DECISION);
-          if (resolved) directDecisionRecordIds.add(resolved);
-          const metadata = transitive.find((candidate) => candidate.id === reference);
-          const entry: Dict = { reference };
-          if (resolved) entry.recordId = resolved;
-          if (metadata?.label) entry.label = metadata.label;
-          if (metadata?.via) entry.scopeId = metadata.via;
-          if (metadata?.selection) entry.selection = metadata.selection;
-          entry.direct = true;
-          decisionsProvenance.push(entry);
-        }
-        for (const dependency of transitive) {
-          const via = dependency.via as string | undefined;
-          const owner = via === "root"
-            ? findRootScope()
-            : via
-              ? findScopeByReference(via)
-              : scope;
-          const resolved = owner
-            ? resolveReference(owner, String(dependency.id), KINDS_DECISION)
-            : undefined;
-          if (
-            (resolved && directDecisionRecordIds.has(resolved))
-            || declaredDecisions.includes(dependency.id)
-          ) {
-            continue;
-          }
-          const entry: Dict = { reference: dependency.id };
-          if (resolved) entry.recordId = resolved;
-          if (dependency.label) entry.label = dependency.label;
-          if (dependency.via) entry.scopeId = dependency.via;
-          if (dependency.selection) entry.selection = dependency.selection;
-          entry.direct = false;
-          decisionsProvenance.push(entry);
-        }
-        outputProvenance = { inputs, decisions: decisionsProvenance };
-      }
-
-      const insightRecordIds = new Map<string, string[]>();
-      for (const [optionId, insightReferences] of Object.entries(
-        (record.option_insights as Record<string, string[]> | undefined) ?? {},
-      )) {
-        const resolvedInsights = insightReferences
-          .map((reference) => resolveReference(scope, reference, KINDS_INSIGHT))
-          .filter((value): value is string => Boolean(value));
-        if (resolvedInsights.length) insightRecordIds.set(optionId, resolvedInsights);
-        for (const reference of insightReferences) {
-          if (!resolveReference(scope, reference, KINDS_INSIGHT)) {
-            adapterDiagnostics.push({
-              severity: "warning",
-              code: "legacy_unresolved_option_insight",
-              message:
-                `Could not uniquely resolve option insight `
-                + `"${reference}" from ${record.path}.`,
-              canonicalPath: record.path,
-            });
-          }
-        }
-      }
-
-      const base: Dict = {
-        id: recordId,
-        localId: record.id,
-        canonicalPath: record.path,
-        scopeId,
-        kind: record.kind,
-      };
-      if (record.label) base.label = record.label;
-      if (record.description) base.description = record.description;
-      if ("active" in record) base.active = record.active;
-      if (record.tags != null) base.tags = record.tags;
-      base.relations = relations;
-
-      if (record.kind === "input") {
-        if (record.type) base.inputType = record.type;
-        if (record.source) base.source = record.source;
-        if (record.ref) base.reference = record.ref;
-      } else if (record.kind === "decision") {
-        const options: Dict[] = [];
-        for (const [optionId, label] of Object.entries(
-          (record.options as Record<string, unknown> | undefined) ?? {},
-        )) {
-          const option: Dict = { id: optionId };
-          if (label) option.label = label;
-          option.selected = optionId === record.selected;
-          const insights = insightRecordIds.get(optionId);
-          if (insights?.length) option.insightRecordIds = [...insights];
-          options.push(option);
-        }
-        if (record.rationale) base.rationale = record.rationale;
-        if (record.selected) base.selectedOptionId = record.selected;
-        base.options = options;
-      } else if (record.kind === "output") {
-        base.outputType = viewOutputType(record.type);
-        if (record.recipe) base.recipe = record.recipe;
-        base.resourceIds = recordResourceIds;
-        base.provenance = outputProvenance ?? { inputs: [], decisions: [] };
-        const metric = asDict(record.metric);
-        if (metric) {
-          const adaptedMetric: Dict = {};
-          if ("value" in metric) adaptedMetric.value = metric.value;
-          const uncertainty = metric.uncertainty ?? metric.error;
-          if (uncertainty != null) adaptedMetric.uncertainty = uncertainty;
-          const unit = metric.unit ?? metric.units;
-          if (unit) adaptedMetric.unit = unit;
-          if (metric.label) adaptedMetric.label = metric.label;
-          base.metric = adaptedMetric;
-        }
-      } else {
-        if (record.claim) base.claim = record.claim;
-        if (record.notes) base.notes = record.notes;
-        base.evidence = legacyEvidence(record);
-      }
-
-      records.push(base);
-      if (record.kind === "decision" && record.selected) {
-        selectedDecisions[recordId] = String(record.selected);
-      }
-    }
-  }
-
-  // Enrich synthesized resources with the artifact metadata the host serves.
-  const artifactsById = new Map(structures.artifacts.map((artifact) => [artifact.id, artifact]));
-  const enrichedResources = resources.map((resource) => {
-    const artifact = artifactsById.get(resource.id as string);
-    if (!artifact) return resource;
-    const fileName = basename(artifact.path);
-    const merged: Dict = { ...resource };
-    merged.mediaType = artifact.mediaType;
-    if (fileName) merged.fileName = fileName;
-    merged.byteSize = artifact.size;
-    if (artifact.revision) merged.revision = artifact.revision;
-    merged.availability = "available";
-    merged.source = "inferred";
-    return merged;
-  });
-
-  const modelScopes = scopes.map((scope) => {
-    const adapted: Dict = {
-      id: normalizedScopeId(scope.id),
-      canonicalPath: scope.path || "root",
-      name: scope.name,
-    };
-    if (scope.parent != null) {
-      adapted.parentId = scopeIdMap.get(scope.parent) ?? normalizedScopeId(scope.parent);
-    }
-    adapted.childIds = scope.children.map(
-      (childId) => scopeIdMap.get(childId) ?? normalizedScopeId(childId),
-    );
-    adapted.recordIds = scope.records.map(
-      (record) => `${normalizedScopeId(scope.id)}:${record.kind}:${record.id}`,
-    );
-    return adapted;
-  });
-
-  const identity: Dict = {
-    id: rootAnalysis.id ?? "root",
-    name: rootAnalysis.name ?? rootAnalysis.id ?? "ASTRA analysis",
-  };
-  if (typeof rootAnalysis.description === "string") {
-    identity.description = rootAnalysis.description;
-  }
-  if (typeof rootAnalysis.version === "string") {
-    identity.astraVersion = rootAnalysis.version;
-  }
-
-  const diagnostics: Dict[] = [];
-  for (const diagnostic of structures.diagnostics) {
-    const entry: Dict = {
-      severity: diagnostic.severity,
-      code: diagnostic.code ?? "legacy_inventory_diagnostic",
-      message: diagnostic.message,
-    };
-    if (diagnostic.path) entry.canonicalPath = diagnostic.path;
-    diagnostics.push(entry);
-  }
-  diagnostics.push(...adapterDiagnostics);
-
-  const revisionEntry: Dict = { analysis: analysisRevision };
-  if (selectionRevision) revisionEntry.selection = selectionRevision;
-
+  const index = resolveCanonicalReferences(structures);
+  attachOutputProvenance(structures, index);
+  const selectedDecisions = Object.fromEntries(
+    structures.records.flatMap((record) =>
+      record.kind === "decision" && record.selectedOptionId
+        ? [[record.id, record.selectedOptionId]]
+        : [],
+    ),
+  );
   return {
     schemaVersion: PROJECT_VIEW_MODEL_SCHEMA_VERSION,
-    revision: revisionEntry,
-    project: identity,
-    selection: {
-      ...(structures.universeId ? { universeId: structures.universeId } : {}),
-      availableUniverses: availableUniverses,
-      decisions: selectedDecisions,
-      source: structures.universeId ? "explicit" : "unknown",
+    revision: {
+      analysis: revisions.analysis,
+      ...(structures.universePath ? { selection: revisions.selection } : {}),
     },
-    scopes: modelScopes,
-    records,
-    resources: enrichedResources,
-    diagnostics,
-  } as unknown as ProjectViewModelV1;
+    project: {
+      id: String(structures.rootAnalysis.id ?? "root"),
+      name: String(
+        structures.rootAnalysis.name
+        ?? structures.rootAnalysis.id
+        ?? "ASTRA analysis",
+      ),
+      ...(typeof structures.rootAnalysis.description === "string"
+        ? { description: structures.rootAnalysis.description }
+        : {}),
+      ...(typeof structures.rootAnalysis.version === "string"
+        ? { astraVersion: structures.rootAnalysis.version }
+        : {}),
+    },
+    selection: {
+      universeId: structures.universeId,
+      availableUniverses: structures.availableUniverses,
+      decisions: selectedDecisions,
+      source: structures.universePath ? "explicit" : "default",
+    },
+    scopes: structures.scopes,
+    records: structures.records,
+    resources: structures.resources,
+    diagnostics: structures.diagnostics,
+  };
 }
 
-function collectCitedDois(scopes: LegacyScope[]): string[] {
+function collectCitedDois(records: readonly ProjectRecordView[]): string[] {
   const normalize = (value: string): string => {
     let normalized = value.trim();
     for (const prefix of ["https://doi.org/", "http://doi.org/", "doi:"]) {
@@ -1460,16 +1278,10 @@ function collectCitedDois(scopes: LegacyScope[]): string[] {
     return normalized.trim().toLowerCase();
   };
   const dois = new Set<string>();
-  for (const scope of scopes) {
-    for (const record of scope.records) {
-      if (record.kind !== "prior_insight") continue;
-      const candidates = [
-        record.doi,
-        ...((record.evidence as Dict[] | undefined) ?? []).map((item) => item.doi),
-      ];
-      for (const doi of candidates) {
-        if (typeof doi === "string") dois.add(normalize(doi));
-      }
+  for (const record of records) {
+    if (record.kind !== "prior_insight") continue;
+    for (const evidence of record.evidence) {
+      if (evidence.doi) dois.add(normalize(evidence.doi));
     }
   }
   return [...dois].sort();
@@ -1483,7 +1295,7 @@ export async function buildProjectViewModel(
   access: ProjectFileAccess,
   options: ProjectViewOptions = {},
 ): Promise<ProjectViewBundle> {
-  const structures = await loadStructures(access, options);
+  const structures = await loadProjectStructures(access, options);
   const revisions: ProjectRevisions = {
     analysis: await dependencyDigest(access, structures.dependencies.analysis),
     selection: await dependencyDigest(access, structures.dependencies.selection),
@@ -1497,7 +1309,7 @@ export async function buildProjectViewModel(
     ),
   ])).slice(0, 16);
 
-  const model = projectCanonicalModel(structures, revisions);
+  const model = createProjectModel(structures, revisions);
 
   const bundle: ProjectViewBundle = {
     model,
@@ -1505,7 +1317,7 @@ export async function buildProjectViewModel(
     revisions,
     revision,
     dependencies: structures.dependencies,
-    citedDois: collectCitedDois(structures.scopes),
+    citedDois: collectCitedDois(structures.records),
   };
   if (structures.graphOrganization.value !== undefined) {
     bundle.graphOrganization = structures.graphOrganization.value;

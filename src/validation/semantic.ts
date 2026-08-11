@@ -152,7 +152,7 @@ export function validateAnalysis(
     const sub = asDict(raw);
     if (!sub) continue;
     errors.push(
-      ..._validateAnalysisNode(analysisId, sub, priorInsights as Dict, [working], "analyses"),
+      ..._validateAnalysisNode(analysisId, sub, [working], "analyses"),
     );
   }
 
@@ -162,7 +162,6 @@ export function validateAnalysis(
 function _validateAnalysisNode(
   nodeId: string,
   node: Dict,
-  priorInsights: Dict,
   ancestorChain: Dict[],
   pathPrefix: string,
 ): SemanticError[] {
@@ -221,6 +220,7 @@ function _validateAnalysisNode(
   errors.push(..._validateOutputsFrom(nodeOutputs, node, nodePath));
 
   const nodeDecisions = collectNodeDecisions(node) as Record<string, Dict>;
+  const priorInsights = asDict(node.prior_insights) ?? {};
 
   // Build the constraint scope: locally-defined decisions plus any `from:`
   // alias resolved one ancestor up (matches the Python constraint_scope).
@@ -282,7 +282,6 @@ function _validateAnalysisNode(
       ..._validateAnalysisNode(
         subId,
         sub,
-        priorInsights,
         [...ancestorChain, node],
         `${nodePath}.analyses`,
       ),

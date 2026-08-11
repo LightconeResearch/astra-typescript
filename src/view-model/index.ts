@@ -7,7 +7,6 @@ export type {
 } from "./access.js";
 export {
   GRAPH_ORGANIZATION_PATH,
-  LEGACY_GRAPH_ORGANIZATION_PATH,
   buildProjectViewModel,
 } from "./project.js";
 export type {

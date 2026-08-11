@@ -1,5 +1,5 @@
 id: iris_classification
-version: "0.0.11"
+version: "1.0"
 name: Iris Classification Study
 description: |
   A demonstration analysis that builds a classifier for the classic

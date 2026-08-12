@@ -107,9 +107,18 @@ export function validateProjectViewModel(
 ): ViewModelDiagnostic[] {
   const diagnostics: ViewModelDiagnostic[] = [];
   const scopeIds = new Set<string>();
-  const recordIds = new Set<string>();
+  const seenRecordIds = new Set<string>();
   const recordPaths = new Set<string>();
   const resourceIds = new Set<string>();
+  const recordById = new Map(
+    model.records.map((record) => [record.id, record]),
+  );
+  const recordIds = new Set(recordById.keys());
+  const outputIds = new Set(
+    model.records
+      .filter((record) => record.kind === "output")
+      .map((record) => record.id),
+  );
 
   for (const scope of model.scopes) {
     if (scopeIds.has(scope.id)) {
@@ -156,7 +165,7 @@ export function validateProjectViewModel(
   }
 
   for (const record of model.records) {
-    if (recordIds.has(record.id)) {
+    if (seenRecordIds.has(record.id)) {
       diagnostics.push({
         severity: "error",
         code: "duplicate_record_id",
@@ -164,7 +173,7 @@ export function validateProjectViewModel(
         canonicalPath: record.canonicalPath,
       });
     }
-    recordIds.add(record.id);
+    seenRecordIds.add(record.id);
     if (recordPaths.has(record.canonicalPath)) {
       diagnostics.push({
         severity: "error",
@@ -195,8 +204,7 @@ export function validateProjectViewModel(
       }
     }
     for (const relation of record.relations) {
-      if (!recordIds.has(relation.targetRecordId)
-        && !model.records.some((candidate) => candidate.id === relation.targetRecordId)) {
+      if (!recordIds.has(relation.targetRecordId)) {
         diagnostics.push({
           severity: "warning",
           code: "missing_relation_target",
@@ -208,23 +216,18 @@ export function validateProjectViewModel(
   }
 
   for (const resource of model.resources) {
-    if (resource.outputRecordId) {
-      const output = model.records.find(
-        (record) => record.id === resource.outputRecordId && record.kind === "output",
-      );
-      if (!output) {
+    if (resource.outputRecordId && !outputIds.has(resource.outputRecordId)) {
         diagnostics.push({
           severity: "warning",
           code: "missing_resource_output",
           message: `Resource ${resource.id} refers to unknown output ${resource.outputRecordId}.`,
         });
-      }
     }
   }
 
   for (const scope of model.scopes) {
     for (const recordId of scope.recordIds) {
-      const record = model.records.find((candidate) => candidate.id === recordId);
+      const record = recordById.get(recordId);
       if (!record || record.scopeId !== scope.id) {
         diagnostics.push({
           severity: "error",

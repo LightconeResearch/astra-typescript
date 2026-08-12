@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -119,6 +119,32 @@ describe("buildProjectViewModel", () => {
       (record) => record.canonicalPath === "outputs.headline",
     ) as OutputRecordView;
     expect(output.resourceIds).toEqual([binding.id]);
+    expect(
+      bundle.model.diagnostics.some(
+        (diagnostic) => diagnostic.code === "missing_expected_result",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not guess artifacts outside the canonical result directory", async () => {
+    await writeFile(join(root, "astra.yaml"), ASTRA_YAML);
+    await mkdir(join(root, "outputs", "default"), { recursive: true });
+    await writeFile(join(root, "outputs", "default", "headline.png"), "legacy");
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+    const output = bundle.model.records.find(
+      (record) => record.canonicalPath === "outputs.headline",
+    ) as OutputRecordView;
+
+    expect(output.resourceIds).toEqual([]);
+    expect(bundle.artifacts).toEqual([]);
+    expect(bundle.model.diagnostics).toContainEqual({
+      severity: "error",
+      code: "missing_expected_result",
+      message:
+        "Result not found at the ASTRA viewer's expected location: results/default/headline/",
+      canonicalPath: "outputs.headline",
+    });
   });
 
   it("keeps unresolved references as diagnostics, not dangling edges", async () => {
@@ -209,5 +235,27 @@ describe("buildProjectViewModel", () => {
     expect(
       resolveProjectRecord(index, { id: "estimator", kind: "decision" })?.record.id,
     ).toBe("root:decision:estimator");
+  });
+
+  it("prevents file access from escaping the project root", async () => {
+    await writeFile(join(root, "astra.yaml"), ASTRA_YAML);
+    const access = createNodeFileAccess(root);
+
+    await expect(access.readText("../outside.yaml")).rejects.toThrow(
+      "Project path escapes the project root",
+    );
+    await expect(access.stat(join(root, "astra.yaml"))).rejects.toThrow(
+      "Project path must be relative",
+    );
+
+    const outside = await mkdtemp(join(tmpdir(), "astra-view-model-outside-"));
+    try {
+      await symlink(outside, join(root, "escape"));
+      await expect(access.listDirectory("escape")).rejects.toThrow(
+        "Project path escapes the project root",
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

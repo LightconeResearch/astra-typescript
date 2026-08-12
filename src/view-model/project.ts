@@ -127,10 +127,6 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-const FIGURE_SUFFIXES = new Set([".gif", ".jpeg", ".jpg", ".pdf", ".png", ".svg", ".webp"]);
-const METRIC_SUFFIXES = new Set([".csv", ".json", ".txt", ".tsv", ".yaml", ".yml"]);
-const TABLE_SUFFIXES = new Set([".csv", ".json", ".parquet", ".tsv"]);
-
 function asDict(value: unknown): Dict | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Dict)
@@ -370,49 +366,17 @@ async function discoverArtifact(
   scopeDirectory: string,
   universeId: string,
   outputId: string,
-  outputType: string,
 ): Promise<string | undefined> {
-  // lightcone-cli's result layout gives each output its own directory.
+  // lightcone-cli's canonical result layout gives each output its own
+  // directory. Viewers do not guess alternate locations: a missing canonical
+  // directory is reported to the user instead of risking a wrong association.
   const ownDirectory = joinPath(scopeDirectory, "results", universeId, outputId);
   const own = await artifactFiles(access, ownDirectory);
   if (own.length) {
     const exact = own.find((name) => name.replace(/\.[^.]*$/, "") === outputId);
     return joinPath(ownDirectory, exact ?? own[0]!);
   }
-
-  // Some existing projects materialize a universe into one flat outputs
-  // directory. Prefer exact names, then a unique file matching the declared
-  // output type, then unambiguous token overlap.
-  const flatDirectory = joinPath(scopeDirectory, "outputs", universeId);
-  const flat = await artifactFiles(access, flatDirectory);
-  if (!flat.length) return undefined;
-  const exact = flat.find((name) => name.replace(/\.[^.]*$/, "") === outputId);
-  if (exact) return joinPath(flatDirectory, exact);
-
-  const suffixes = { figure: FIGURE_SUFFIXES, metric: METRIC_SUFFIXES, table: TABLE_SUFFIXES }[
-    outputType.toLowerCase() as "figure" | "metric" | "table"
-  ];
-  const candidates = suffixes
-    ? flat.filter((name) => suffixes.has(fileExtension(name)))
-    : flat;
-  if (candidates.length === 1) return joinPath(flatDirectory, candidates[0]!);
-
-  const outputTokens = new Set(outputId.toLowerCase().replace(/-/g, "_").split("_"));
-  const scored = candidates
-    .map((name) => {
-      const stem = name.replace(/\.[^.]*$/, "");
-      const tokens = new Set(stem.toLowerCase().replace(/-/g, "_").split("_"));
-      let overlap = 0;
-      for (const token of outputTokens) if (tokens.has(token)) overlap += 1;
-      return { overlap, name };
-    })
-    .sort((a, b) => a.overlap - b.overlap || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const top = scored[scored.length - 1];
-  if (!top || top.overlap === 0) return undefined;
-  if (scored.length > 1 && scored[scored.length - 2]!.overlap === top.overlap) {
-    return undefined;
-  }
-  return joinPath(flatDirectory, top.name);
+  return undefined;
 }
 
 const KINDS_INPUT_OUTPUT = ["input", "output"] as const;
@@ -798,7 +762,6 @@ async function loadProjectStructures(
         directory,
         universeId,
         localId,
-        String(output.type ?? ""),
       );
       const artifact = artifactPath && !isExternalPath(artifactPath)
         ? artifactPath
@@ -826,6 +789,20 @@ async function loadProjectStructures(
         relations: [],
       };
       addRecord(record);
+      if (!artifact) {
+        const expectedDirectory = joinPath(
+          directory,
+          "results",
+          universeId,
+          localId,
+        );
+        diagnostics.push({
+          severity: "error",
+          code: "missing_expected_result",
+          message: `Result not found at the ASTRA viewer's expected location: ${expectedDirectory}/`,
+          canonicalPath,
+        });
+      }
       const alias = asString(output.from);
       outputs.set(id, {
         scopeId: ownerScopeId,

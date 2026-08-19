@@ -41,8 +41,6 @@ import type {
 } from "./types.js";
 import { PROJECT_VIEW_MODEL_SCHEMA_VERSION } from "./types.js";
 
-export const GRAPH_ORGANIZATION_PATH = ".astra/astra.graph.yaml";
-
 /** Host-side binding from a resource id to a real file the host may serve. */
 export interface ArtifactBinding {
   id: string;
@@ -61,14 +59,12 @@ export interface ProjectRevisions {
   analysis: string;
   selection: string;
   materialization: string;
-  organization: string;
 }
 
 export interface ProjectDependencies {
   analysis: string[];
   selection: string[];
   materialization: string[];
-  organization: string[];
 }
 
 export interface ProjectViewBundle {
@@ -77,8 +73,6 @@ export interface ProjectViewBundle {
   revisions: ProjectRevisions;
   /** Combined revision suitable for ETag-style freshness checks. */
   revision: string;
-  /** Raw astra.graph.yaml value (or `{load_error}` marker), when present. */
-  graphOrganization?: unknown;
   /** Project-relative files each revision digest watched. */
   dependencies: ProjectDependencies;
   /** Normalized DOIs cited by prior-insight evidence, sorted. */
@@ -166,8 +160,7 @@ async function sha256Hex(chunks: Uint8Array[]): Promise<string> {
 
 function mtimeNsOf(stat: FileStatInfo): string {
   // Digest with millisecond precision only: the Jupyter contents API cannot
-  // see nanoseconds, and revision digests must agree across hosts so that a
-  // graph organization stamped by one host is "current" in another.
+  // see nanoseconds, and revision digests must agree across viewer hosts.
   return (BigInt(Math.floor(stat.mtimeMs)) * 1_000_000n).toString();
 }
 
@@ -212,51 +205,6 @@ async function dependencyDigest(
 
 async function loadYamlDict(access: ProjectFileAccess, path: string): Promise<Dict> {
   return parseYamlString(await access.readText(path));
-}
-
-interface GraphOrganizationResult {
-  value: unknown;
-  path?: string;
-  diagnostic?: Dict;
-}
-
-async function readGraphOrganization(
-  access: ProjectFileAccess,
-): Promise<GraphOrganizationResult> {
-  const stat = await access.stat(GRAPH_ORGANIZATION_PATH);
-  if (stat?.type !== "file") return { value: undefined };
-  let parsed: unknown;
-  try {
-    parsed = parseYamlString(await access.readText(GRAPH_ORGANIZATION_PATH));
-  } catch (error) {
-    return {
-      value: { load_error: String(error instanceof Error ? error.message : error) },
-      path: GRAPH_ORGANIZATION_PATH,
-      diagnostic: {
-        severity: "warning",
-        code: "graph.organization.unreadable",
-        path: GRAPH_ORGANIZATION_PATH,
-        message:
-          "The graph organization file could not be read. "
-          + "The complete canonical graph remains available.",
-      },
-    };
-  }
-  if (!asDict(parsed)) {
-    return {
-      value: { load_error: "astra.graph.yaml is not a mapping" },
-      path: GRAPH_ORGANIZATION_PATH,
-      diagnostic: {
-        severity: "warning",
-        code: "graph.organization.not_mapping",
-        path: GRAPH_ORGANIZATION_PATH,
-        message:
-          "The graph organization file must contain a YAML mapping. "
-          + "The complete canonical graph remains available.",
-      },
-    };
-  }
-  return { value: parsed, path: GRAPH_ORGANIZATION_PATH };
 }
 
 interface UniverseResult {
@@ -419,7 +367,6 @@ interface ProjectStructures {
   universeId: string;
   universePath?: string;
   availableUniverses: string[];
-  graphOrganization: GraphOrganizationResult;
   dependencies: ProjectDependencies;
 }
 
@@ -587,7 +534,6 @@ async function loadProjectStructures(
   if (!rootStat) throw new Error("No astra.yaml found in the project root");
 
   const rootAnalysis = await loadYamlDict(access, "astra.yaml");
-  const graphOrganization = await readGraphOrganization(access);
   const { universe, path: universePath, available } = await readUniverse(
     access,
     options.universeId,
@@ -606,18 +552,7 @@ async function loadProjectStructures(
     analysis: ["astra.yaml"],
     selection: universePath ? [universePath] : [],
     materialization: [],
-    organization: graphOrganization.path ? [graphOrganization.path] : [],
   };
-  if (graphOrganization.diagnostic) {
-    diagnostics.push({
-      severity: graphOrganization.diagnostic.severity as ViewModelDiagnostic["severity"],
-      code: String(graphOrganization.diagnostic.code),
-      message: String(graphOrganization.diagnostic.message),
-      ...(graphOrganization.diagnostic.path
-        ? { canonicalPath: String(graphOrganization.diagnostic.path) }
-        : {}),
-    });
-  }
 
   const visit = async (
     analysis: Dict,
@@ -789,7 +724,7 @@ async function loadProjectStructures(
         relations: [],
       };
       addRecord(record);
-      if (!artifact) {
+      if (!artifact && metric?.value === undefined) {
         const expectedDirectory = joinPath(
           directory,
           "results",
@@ -797,9 +732,11 @@ async function loadProjectStructures(
           localId,
         );
         diagnostics.push({
-          severity: "error",
+          severity: "info",
           code: "missing_expected_result",
-          message: `Result not found at the ASTRA viewer's expected location: ${expectedDirectory}/`,
+          message:
+            `No materialized result was found. Expected it at ${expectedDirectory}/. `
+            + "Place or materialize the result there, then refresh.",
           canonicalPath,
         });
       }
@@ -938,7 +875,6 @@ async function loadProjectStructures(
     universeId,
     ...(universePath ? { universePath } : {}),
     availableUniverses: available,
-    graphOrganization,
     dependencies,
   };
 }
@@ -1277,12 +1213,10 @@ export async function buildProjectViewModel(
     analysis: await dependencyDigest(access, structures.dependencies.analysis),
     selection: await dependencyDigest(access, structures.dependencies.selection),
     materialization: await dependencyDigest(access, structures.dependencies.materialization),
-    organization: await dependencyDigest(access, structures.dependencies.organization),
   };
   const revision = (await sha256Hex([
     encoder.encode(
-      `${revisions.analysis}:${revisions.selection}:`
-      + `${revisions.materialization}:${revisions.organization}`,
+      `${revisions.analysis}:${revisions.selection}:${revisions.materialization}`,
     ),
   ])).slice(0, 16);
 
@@ -1296,8 +1230,5 @@ export async function buildProjectViewModel(
     dependencies: structures.dependencies,
     citedDois: collectCitedDois(structures.records),
   };
-  if (structures.graphOrganization.value !== undefined) {
-    bundle.graphOrganization = structures.graphOrganization.value;
-  }
   return bundle;
 }

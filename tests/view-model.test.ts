@@ -139,12 +139,28 @@ describe("buildProjectViewModel", () => {
     expect(output.resourceIds).toEqual([]);
     expect(bundle.artifacts).toEqual([]);
     expect(bundle.model.diagnostics).toContainEqual({
-      severity: "error",
+      severity: "info",
       code: "missing_expected_result",
       message:
-        "Result not found at the ASTRA viewer's expected location: results/default/headline/",
+        "No materialized result was found. Expected it at results/default/headline/. "
+        + "Place or materialize the result there, then refresh.",
       canonicalPath: "outputs.headline",
     });
+  });
+
+  it("does not require a materialized file for a declared metric value", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      'version: "1.0"\nname: Metrics\noutputs:\n  - id: score\n    type: metric\n    metric:\n      value: 0.97\n',
+    );
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+
+    expect(
+      bundle.model.diagnostics.some(
+        (diagnostic) => diagnostic.code === "missing_expected_result",
+      ),
+    ).toBe(false);
   });
 
   it("keeps unresolved references as diagnostics, not dangling edges", async () => {
@@ -168,26 +184,6 @@ describe("buildProjectViewModel", () => {
         (diagnostic) => diagnostic.code === "unresolved_relation",
       ),
     ).toBe(true);
-  });
-
-  it("reads the graph organization from .astra/ only", async () => {
-    await writeFile(join(root, "astra.yaml"), ASTRA_YAML);
-    await mkdir(join(root, ".astra"));
-    const organization =
-      "schema_version: graph-organization.v1\nsource:\n  entrypoint: astra.yaml\n  organization_input_digest: abc\ngroups: []\n";
-    await writeFile(join(root, ".astra", "astra.graph.yaml"), organization);
-
-    const primary = await buildProjectViewModel(createNodeFileAccess(root));
-    expect(primary.graphOrganization).toMatchObject({
-      schema_version: "graph-organization.v1",
-    });
-    expect(primary.dependencies.organization).toEqual([".astra/astra.graph.yaml"]);
-
-    await rm(join(root, ".astra"), { recursive: true });
-    await writeFile(join(root, "astra.graph.yaml"), organization);
-    const rootSidecar = await buildProjectViewModel(createNodeFileAccess(root));
-    expect(rootSidecar.graphOrganization).toBeUndefined();
-    expect(rootSidecar.dependencies.organization).toEqual([]);
   });
 
   it("rejects retired schema versions and removed fields", async () => {

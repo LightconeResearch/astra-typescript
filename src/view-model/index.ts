@@ -6,7 +6,6 @@ export type {
   ProjectFileAccess,
 } from "./access.js";
 export {
-  GRAPH_ORGANIZATION_PATH,
   buildProjectViewModel,
 } from "./project.js";
 export type {

@@ -322,4 +322,41 @@ describe("buildProjectViewModel", () => {
     expect(bundle.artifacts).toHaveLength(1);
     expect(bundle.artifacts[0]!.path).toBe("results/default/headline/headline.pdf");
   });
+
+  it("picks the artifact by extension when the run named the file itself", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      ASTRA_YAML.replace("    type: figure\n", "    type: figure\n    format: pdf\n"),
+    );
+    const dir = join(root, "results", "default", "headline");
+    await mkdir(dir, { recursive: true });
+    // The artifact does not carry the output's id, so only its extension
+    // separates it from the log that sorts ahead of it.
+    await writeFile(join(dir, "headline.log"), "run log\n");
+    await writeFile(join(dir, "figure.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46]));
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.artifacts[0]!.path).toBe("results/default/headline/figure.pdf");
+  });
+
+  it("uses a re-export's inherited format to pick its artifact", async () => {
+    // The format the alias reports and the file it binds have to agree: a
+    // viewer told `svg` and handed the run log would open the wrong thing.
+    await writeFile(join(root, "astra.yaml"), NESTED_YAML);
+    const dir = join(root, "results", "default", "headline");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "headline.log"), "run log\n");
+    await writeFile(join(dir, "headline.svg"), "<svg></svg>\n");
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+    const byPath = new Map(bundle.model.records.map((r) => [r.canonicalPath, r]));
+    const headline = byPath.get("outputs.headline") as OutputRecordView;
+
+    expect(headline.format).toBe("svg");
+    const binding = bundle.artifacts.find((entry) => entry.recordId === headline.id);
+    expect(binding?.path).toBe("results/default/headline/headline.svg");
+    expect(binding?.mediaType).toBe("image/svg+xml");
+  });
 });

@@ -324,8 +324,15 @@ async function discoverArtifact(
   if (own.length) {
     // A declared `format` says which file in the directory is *the* artifact,
     // so a run that also wrote a log or a preview alongside it no longer
-    // decides the association by sort order.
-    const declared = format ? own.find((name) => name === `${outputId}.${format}`) : undefined;
+    // decides the association by sort order. The canonical `<id>.<format>`
+    // wins; failing that, any file carrying the declared extension does, which
+    // also covers a name the run chose for itself and the dotted formats
+    // (`tar.gz`) the single-extension strip below cannot see.
+    const suffix = format ? `.${format.toLowerCase()}` : undefined;
+    const declared = suffix
+      ? own.find((name) => name.toLowerCase() === `${outputId.toLowerCase()}${suffix}`)
+        ?? own.find((name) => name.toLowerCase().endsWith(suffix))
+      : undefined;
     const exact = own.find((name) => name.replace(/\.[^.]*$/, "") === outputId);
     return joinPath(ownDirectory, declared ?? exact ?? own[0]!);
   }
@@ -349,6 +356,13 @@ interface PendingEvidenceArtifact {
   scopeId: string;
   evidenceIndex: number;
   reference: string;
+}
+
+interface PendingArtifact {
+  record: OutputRecordView;
+  directory: string;
+  resourceKind: ResourceDescriptor["kind"];
+  hasMetricValue: boolean;
 }
 
 interface AuthoredOutputReferences {
@@ -550,6 +564,7 @@ async function loadProjectStructures(
   const artifacts: ArtifactBinding[] = [];
   const diagnostics: ViewModelDiagnostic[] = [];
   const aliases: PendingAlias[] = [];
+  const pendingArtifacts: PendingArtifact[] = [];
   const evidenceArtifacts: PendingEvidenceArtifact[] = [];
   const optionInsights = new Map<string, ReadonlyMap<string, readonly string[]>>();
   const outputs = new Map<string, AuthoredOutputReferences>();
@@ -698,19 +713,6 @@ async function loadProjectStructures(
       const id = modelRecordId(ownerScopeId, "output", localId);
       const canonicalPath = recordPath(path, "outputs", localId);
       const declaredFormat = asString(output.format);
-      const artifactPath = await discoverArtifact(
-        access,
-        directory,
-        universeId,
-        localId,
-        declaredFormat,
-      );
-      const artifact = artifactPath && !isExternalPath(artifactPath)
-        ? artifactPath
-        : undefined;
-      const resourceId = artifact
-        ? `resource:${ownerScopeId}:output:${localId}`
-        : undefined;
       const recipe = recipeDescriptor(output.recipe);
       const metric = metricDescriptor(output.metric);
       const record: OutputRecordView = {
@@ -726,28 +728,21 @@ async function loadProjectStructures(
         outputType: viewOutputType(output.type),
         ...(declaredFormat ? { format: declaredFormat } : {}),
         ...(recipe ? { recipe } : {}),
-        resourceIds: resourceId ? [resourceId] : [],
+        resourceIds: [],
         provenance: { inputs: [], decisions: [] },
         ...(metric ? { metric } : {}),
         relations: [],
       };
       addRecord(record);
-      if (!artifact && metric?.value === undefined) {
-        const expectedDirectory = joinPath(
-          directory,
-          "results",
-          universeId,
-          localId,
-        );
-        diagnostics.push({
-          severity: "info",
-          code: "missing_expected_result",
-          message:
-            `No materialized result was found. Expected it at ${expectedDirectory}/. `
-            + "Place or materialize the result there, then refresh.",
-          canonicalPath,
-        });
-      }
+      // Binding is deferred to a post-pass: a re-export only learns its format
+      // once the whole tree is walked and the chain it stands for can be
+      // followed, and that format is what picks its file.
+      pendingArtifacts.push({
+        record,
+        directory,
+        resourceKind: resourceKind(output.type),
+        hasMetricValue: metric?.value !== undefined,
+      });
       const alias = asString(output.from);
       outputs.set(id, {
         scopeId: ownerScopeId,
@@ -762,38 +757,6 @@ async function loadProjectStructures(
           reference: alias,
           targetKinds: KINDS_OUTPUT,
         });
-      }
-      if (artifact && resourceId) {
-        const stat = await access.stat(artifact);
-        if (stat) {
-          const revision = (await sha256Hex([
-            encoder.encode(`${artifact}:${mtimeNsOf(stat)}:${stat.size}`),
-          ])).slice(0, 16);
-          const mediaType = mediaTypeFor(artifact);
-          artifacts.push({
-            id: resourceId,
-            recordId: id,
-            recordPath: canonicalPath,
-            path: artifact,
-            mediaType,
-            size: stat.size,
-            revision,
-            availability: "available",
-            source: "inferred",
-          });
-          resources.push({
-            id: resourceId,
-            kind: resourceKind(output.type),
-            mediaType,
-            fileName: basename(artifact),
-            byteSize: stat.size,
-            revision,
-            availability: "available",
-            source: "inferred",
-            outputRecordId: id,
-          });
-          dependencies.materialization.push(artifact);
-        }
       }
     }
 
@@ -869,7 +832,7 @@ async function loadProjectStructures(
   };
 
   await visit(rootAnalysis, "", [], universe);
-  return {
+  const structures: ProjectStructures = {
     rootAnalysis,
     scopes,
     records,
@@ -885,6 +848,87 @@ async function loadProjectStructures(
     availableUniverses: available,
     dependencies,
   };
+  attachAliasedFormats(structures);
+  await bindArtifacts(access, structures, pendingArtifacts);
+  return structures;
+}
+
+/**
+ * Bind every output to the file that materializes it.
+ *
+ * Runs once the whole tree is walked, so a re-export's inherited format is
+ * already on its record: the format is what tells a results directory holding
+ * more than one file which of them is the artifact, and an alias can only
+ * learn it from the chain it re-exports.
+ */
+async function bindArtifacts(
+  access: ProjectFileAccess,
+  structures: ProjectStructures,
+  pending: readonly PendingArtifact[],
+): Promise<void> {
+  const { universeId } = structures;
+  for (const { record, directory, resourceKind, hasMetricValue } of pending) {
+    const artifactPath = await discoverArtifact(
+      access,
+      directory,
+      universeId,
+      record.localId,
+      record.format,
+    );
+    const artifact = artifactPath && !isExternalPath(artifactPath)
+      ? artifactPath
+      : undefined;
+    if (!artifact) {
+      if (!hasMetricValue) {
+        const expectedDirectory = joinPath(
+          directory,
+          "results",
+          universeId,
+          record.localId,
+        );
+        structures.diagnostics.push({
+          severity: "info",
+          code: "missing_expected_result",
+          message:
+            `No materialized result was found. Expected it at ${expectedDirectory}/. `
+            + "Place or materialize the result there, then refresh.",
+          canonicalPath: record.canonicalPath,
+        });
+      }
+      continue;
+    }
+    const stat = await access.stat(artifact);
+    if (!stat) continue;
+    const resourceId = `resource:${record.scopeId}:output:${record.localId}`;
+    const revision = (await sha256Hex([
+      encoder.encode(`${artifact}:${mtimeNsOf(stat)}:${stat.size}`),
+    ])).slice(0, 16);
+    const mediaType = mediaTypeFor(artifact);
+    record.resourceIds.push(resourceId);
+    structures.artifacts.push({
+      id: resourceId,
+      recordId: record.id,
+      recordPath: record.canonicalPath,
+      path: artifact,
+      mediaType,
+      size: stat.size,
+      revision,
+      availability: "available",
+      source: "inferred",
+    });
+    structures.resources.push({
+      id: resourceId,
+      kind: resourceKind,
+      mediaType,
+      fileName: basename(artifact),
+      byteSize: stat.size,
+      revision,
+      availability: "available",
+      source: "inferred",
+      outputRecordId: record.id,
+    });
+    structures.dependencies.materialization.push(artifact);
+  }
 }
 
 function addUnresolvedDiagnostic(
@@ -1074,18 +1118,31 @@ function traceOutputProvenance(
  *
  * The schema forbids `format` on an alias, so an alias that reported only
  * what it declared would always report nothing — leaving a viewer holding a
- * re-export unable to say what it is about to open. Runs after aliases are
- * resolved, so the chain is walkable.
+ * re-export unable to say what it is about to open. Walks the authored `from`
+ * chain rather than resolved relations, so it can run before artifacts are
+ * bound and hand `bindArtifacts` a format to select the file with.
  */
-function attachAliasedFormats(
-  structures: ProjectStructures,
-  index: ProjectionIndex,
-): void {
+function attachAliasedFormats(structures: ProjectStructures): void {
+  const index = createProjectionIndex(structures);
+  const aliasByRecordId = new Map(
+    structures.aliases.map((alias) => [alias.recordId, alias]),
+  );
+  const inheritedFormat = (
+    record: ProjectRecordView,
+    seen: Set<string>,
+  ): string | undefined => {
+    if (record.kind !== "output" || seen.has(record.id)) return undefined;
+    if (record.format) return record.format;
+    seen.add(record.id);
+    const alias = aliasByRecordId.get(record.id);
+    if (!alias) return undefined;
+    const target = resolveReference(index, alias.scopeId, alias.reference, KINDS_OUTPUT);
+    return target ? inheritedFormat(target, seen) : undefined;
+  };
   for (const record of structures.records) {
     if (record.kind !== "output" || record.format) continue;
-    const target = aliasedTarget(index, record);
-    if (target.id === record.id || target.kind !== "output") continue;
-    if (target.format) record.format = target.format;
+    const format = inheritedFormat(record, new Set());
+    if (format) record.format = format;
   }
 }
 
@@ -1165,7 +1222,6 @@ function createProjectModel(
   revisions: ProjectRevisions,
 ): ProjectViewModelV1 {
   const index = resolveCanonicalReferences(structures);
-  attachAliasedFormats(structures, index);
   attachOutputProvenance(structures, index);
   const selectedDecisions = Object.fromEntries(
     structures.records.flatMap((record) =>

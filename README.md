@@ -76,6 +76,12 @@ for (const note of collectRecommendations(loadYaml("astra.yaml"))) console.warn(
 // from ASTRA 0.1.0 — add the artifact's file extension, e.g. 'format: png'.
 ```
 
+For a multi-file project, pass `basePath` so sub-analyses declared with `path:` are loaded before the walk — without it they are unresolved stubs and their outputs are skipped:
+
+```ts
+collectRecommendations(loadYaml("astra.yaml"), { basePath: "." });
+```
+
 It is deliberately separate from `validateAnalysis`, whose `SemanticError[]` is an error-only channel: a recommendation must never make an analysis invalid. Currently the only one is `Output.format`, required on non-aliased outputs from ASTRA 0.1.0.
 
 ## Validate a universe

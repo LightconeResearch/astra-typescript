@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { collectRecommendations, validateAnalysis } from "../src/index.js";
 
@@ -50,6 +53,27 @@ describe("collectRecommendations", () => {
     expect(messages[0]).toContain("2 outputs");
     expect(messages[0]).toContain("a");
     expect(messages[0]).toContain("c");
+  });
+
+  it("reaches outputs in a sub-analysis referenced by path", async () => {
+    // Without `basePath` the sub is an unresolved stub with no outputs, and a
+    // project that has none would be reported as having nothing to fix.
+    const root = await mkdtemp(join(tmpdir(), "astra-recommendations-"));
+    try {
+      await mkdir(join(root, "sub"));
+      await writeFile(
+        join(root, "sub", "astra.yaml"),
+        "version: \"1.0\"\nname: Sub\ninputs: []\noutputs:\n  - id: result\n    type: metric\n",
+      );
+      const data = analysis([], { analyses: { child: { path: "sub" } } });
+
+      expect(collectRecommendations(data)).toEqual([]);
+      const messages = collectRecommendations(data, { basePath: root });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toContain("child.result");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("does not make the analysis invalid", () => {

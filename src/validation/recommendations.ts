@@ -6,7 +6,7 @@
 // error-only channel: a caller treats a non-empty result as invalid, and a
 // recommendation must never make an analysis invalid.
 
-import { type Dict, asArray, asDict } from "../helpers.js";
+import { type Dict, asArray, asDict, resolveAnalysisTree } from "../helpers.js";
 import type { Analysis } from "../types.js";
 
 /** The release that turns the recommendations below into requirements. */
@@ -36,10 +36,21 @@ function walk(node: Dict, scope: readonly string[], missing: string[]): void {
  *
  * Returns human-readable messages, empty when there is nothing to say. These
  * are advisory: they never make an analysis invalid.
+ *
+ * Pass `basePath` for a multi-file project: a sub-analysis declared with
+ * `path:` is a stub until the tree is resolved, and its outputs would
+ * otherwise be skipped in silence — reported as a clean bill of health for a
+ * project that in fact has none.
  */
-export function collectRecommendations(data: Analysis | Dict): string[] {
+export function collectRecommendations(
+  data: Analysis | Dict,
+  options: { basePath?: string } = {},
+): string[] {
+  const working = options.basePath
+    ? resolveAnalysisTree(data as Dict, options.basePath)
+    : (data as Dict);
   const missingFormat: string[] = [];
-  walk(data as Dict, [], missingFormat);
+  walk(working, [], missingFormat);
 
   if (!missingFormat.length) return [];
   const subject = missingFormat.length === 1 ? "output" : "outputs";

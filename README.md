@@ -64,6 +64,20 @@ Pin to a specific spec version per call:
 await validateAnalysisFile("astra.yaml", { version: "0.0.10" });
 ```
 
+### Recommended fields
+
+Some fields the schema marks `recommended` rather than `required`. Omitting one is not an error — the analysis is valid — but it will become one, so `collectRecommendations` reports it while there is still time to act:
+
+```ts
+import { collectRecommendations, loadYaml } from "@astra-spec/sdk";
+
+for (const note of collectRecommendations(loadYaml("astra.yaml"))) console.warn(note);
+// 2 outputs without a 'format': accuracy, conclusion. Optional today, required
+// from ASTRA 0.1.0 — add the artifact's file extension, e.g. 'format: png'.
+```
+
+It is deliberately separate from `validateAnalysis`, whose `SemanticError[]` is an error-only channel: a recommendation must never make an analysis invalid. Currently the only one is `Output.format`, required on non-aliased outputs from ASTRA 0.1.0.
+
 ## Validate a universe
 
 ```ts
@@ -87,6 +101,7 @@ const semantic = validateUniverse(
 | Schema loader | `loadAstraSchema`, `setAstraSchema`, `clearAstraSchemaCache`, `astraSchemaUrl`, `ASTRA_SPEC_HOST`, `JsonSchema`, `SchemaLoadOptions` |
 | Structural validation | `validateAnalysisData`, `validateAnalysisFile`, `validateUniverseData`, `validateUniverseFile`, `isValidAnalysis`, `isValidUniverse` (all async) |
 | Semantic validation | `validateAnalysis`, `validateUniverse`, `semanticValidateAnalysisFile`, `semanticValidateUniverseFile`, `SemanticError` |
+| Recommendations | `collectRecommendations`, `RECOMMENDED_UNTIL` |
 | Helpers | `loadYaml`, `parseYamlString`, `isConditionMet`, `collectNodeDecisions`, `resolveAnalysisTree`, `getInputIds`, `getOutputIds` |
 | Types | `Analysis`, `Universe`, `UniverseNode`, `Input`, `Output`, `Decision`, `Option`, `Recipe`, `Resources`, `Insight`, `Evidence`, `TextQuoteSelector`, `FragmentSelector` |
 
@@ -96,6 +111,7 @@ ASTRA validation is layered, matching the Python implementation:
 
 1. **Structural** — JSON Schema (Ajv, draft 2019-09). Shape, types, required fields, ID patterns, `from`-alias forbidden-field rules. Async because it fetches/loads the schema.
 2. **Semantic** — cross-references and constraint resolution: duplicate IDs, default option existence, `from:` direction rules, `Output.inputs` / `Output.decisions` resolution, recipe template placeholders, output dependency cycles, universe selections, constraint compatibility. Synchronous.
+3. **Advisory** — `collectRecommendations`, for fields that are recommended today and required in a future spec release. Never affects validity.
 
 ## Development
 

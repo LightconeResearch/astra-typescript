@@ -314,6 +314,7 @@ async function discoverArtifact(
   scopeDirectory: string,
   universeId: string,
   outputId: string,
+  format?: string,
 ): Promise<string | undefined> {
   // lightcone-cli's canonical result layout gives each output its own
   // directory. Viewers do not guess alternate locations: a missing canonical
@@ -321,8 +322,12 @@ async function discoverArtifact(
   const ownDirectory = joinPath(scopeDirectory, "results", universeId, outputId);
   const own = await artifactFiles(access, ownDirectory);
   if (own.length) {
+    // A declared `format` says which file in the directory is *the* artifact,
+    // so a run that also wrote a log or a preview alongside it no longer
+    // decides the association by sort order.
+    const declared = format ? own.find((name) => name === `${outputId}.${format}`) : undefined;
     const exact = own.find((name) => name.replace(/\.[^.]*$/, "") === outputId);
-    return joinPath(ownDirectory, exact ?? own[0]!);
+    return joinPath(ownDirectory, declared ?? exact ?? own[0]!);
   }
   return undefined;
 }
@@ -692,11 +697,13 @@ async function loadProjectStructures(
       if (!output || !localId) continue;
       const id = modelRecordId(ownerScopeId, "output", localId);
       const canonicalPath = recordPath(path, "outputs", localId);
+      const declaredFormat = asString(output.format);
       const artifactPath = await discoverArtifact(
         access,
         directory,
         universeId,
         localId,
+        declaredFormat,
       );
       const artifact = artifactPath && !isExternalPath(artifactPath)
         ? artifactPath
@@ -717,6 +724,7 @@ async function loadProjectStructures(
           ? { description: output.description }
           : {}),
         outputType: viewOutputType(output.type),
+        ...(declaredFormat ? { format: declaredFormat } : {}),
         ...(recipe ? { recipe } : {}),
         resourceIds: resourceId ? [resourceId] : [],
         provenance: { inputs: [], decisions: [] },
@@ -1062,6 +1070,25 @@ function traceOutputProvenance(
   return { inputs: [...roots.values()], decisions: [...decisions.values()] };
 }
 
+/** Give every re-export the format of the output it stands for.
+ *
+ * The schema forbids `format` on an alias, so an alias that reported only
+ * what it declared would always report nothing — leaving a viewer holding a
+ * re-export unable to say what it is about to open. Runs after aliases are
+ * resolved, so the chain is walkable.
+ */
+function attachAliasedFormats(
+  structures: ProjectStructures,
+  index: ProjectionIndex,
+): void {
+  for (const record of structures.records) {
+    if (record.kind !== "output" || record.format) continue;
+    const target = aliasedTarget(index, record);
+    if (target.id === record.id || target.kind !== "output") continue;
+    if (target.format) record.format = target.format;
+  }
+}
+
 function attachOutputProvenance(
   structures: ProjectStructures,
   index: ProjectionIndex,
@@ -1138,6 +1165,7 @@ function createProjectModel(
   revisions: ProjectRevisions,
 ): ProjectViewModelV1 {
   const index = resolveCanonicalReferences(structures);
+  attachAliasedFormats(structures, index);
   attachOutputProvenance(structures, index);
   const selectedDecisions = Object.fromEntries(
     structures.records.flatMap((record) =>

@@ -169,6 +169,13 @@ export type ViewOutputType =
 export interface OutputRecordView extends BaseRecordView {
   kind: "output";
   outputType: ViewOutputType;
+  /**
+   * The artifact's serialization (`png`, `csv`, `parquet`, …), as declared.
+   * A re-export declares none of its own — the schema forbids it — so this
+   * carries the format of the output it ultimately stands for. Absent when
+   * the spec omits it, which stays legal until ASTRA 0.1.0.
+   */
+  format?: string;
   recipe?: RecipeDescriptor;
   /** References descriptors; it never contains file paths, URLs, or bytes. */
   resourceIds: string[];

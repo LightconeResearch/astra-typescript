@@ -40,6 +40,8 @@ export {
   validateUniverse,
   semanticValidateAnalysisFile,
   semanticValidateUniverseFile,
+  RECOMMENDED_UNTIL,
+  collectRecommendations,
 } from "./validation/index.js";
 
 export {

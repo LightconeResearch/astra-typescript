@@ -69,6 +69,16 @@ export interface Output {
   id: string;
   label?: string;
   type?: OutputType;
+  /**
+   * Serialization of the artifact: the file extension it is written with,
+   * without the leading dot (`png`, `csv`, `parquet`, `fits`). Where `type`
+   * says what the artifact *is*, this says how it is encoded.
+   *
+   * Recommended, not required, in ASTRA 0.0.x — required on non-aliased
+   * outputs from 0.1.0. Forbidden on a re-export (`from`), which inherits
+   * its source's.
+   */
+  format?: string;
   description?: string;
   inputs?: string[];
   decisions?: string[];

@@ -37,6 +37,29 @@ outputs:
     decisions: [estimator]
 `;
 
+// A re-export at the root standing for a child's output. The alias declares
+// no `format` — the schema forbids it — so the projection has to supply the
+// child's.
+const NESTED_YAML = `
+version: "1.0"
+name: Nested example
+inputs:
+  - id: catalog
+    type: data
+    description: Source catalog.
+outputs:
+  - id: headline
+    from: stage.plot
+analyses:
+  stage:
+    id: stage
+    outputs:
+      - id: plot
+        type: figure
+        format: svg
+        description: Stage figure.
+`;
+
 let root: string;
 
 beforeEach(async () => {
@@ -253,5 +276,50 @@ describe("buildProjectViewModel", () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+
+  it("carries the declared output format", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      ASTRA_YAML.replace("    type: figure\n", "    type: figure\n    format: png\n"),
+    );
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+    const byPath = new Map(bundle.model.records.map((r) => [r.canonicalPath, r]));
+    expect((byPath.get("outputs.headline") as OutputRecordView).format).toBe("png");
+  });
+
+  it("leaves format absent when the spec omits it", async () => {
+    await writeFile(join(root, "astra.yaml"), ASTRA_YAML);
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+    const byPath = new Map(bundle.model.records.map((r) => [r.canonicalPath, r]));
+    expect((byPath.get("outputs.headline") as OutputRecordView).format).toBeUndefined();
+  });
+
+  it("gives a re-export the format of the output it stands for", async () => {
+    await writeFile(join(root, "astra.yaml"), NESTED_YAML);
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+    const byPath = new Map(bundle.model.records.map((r) => [r.canonicalPath, r]));
+    expect((byPath.get("outputs.headline") as OutputRecordView).format).toBe("svg");
+    expect((byPath.get("stage.outputs.plot") as OutputRecordView).format).toBe("svg");
+  });
+
+  it("uses the declared format to pick the artifact among several files", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      ASTRA_YAML.replace("    type: figure\n", "    type: figure\n    format: pdf\n"),
+    );
+    const dir = join(root, "results", "default", "headline");
+    await mkdir(dir, { recursive: true });
+    // Sorts before the real artifact, and would win on `own[0]` alone.
+    await writeFile(join(dir, "headline.log"), "run log\n");
+    await writeFile(join(dir, "headline.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46]));
+
+    const bundle = await buildProjectViewModel(createNodeFileAccess(root));
+
+    expect(bundle.artifacts).toHaveLength(1);
+    expect(bundle.artifacts[0]!.path).toBe("results/default/headline/headline.pdf");
   });
 });

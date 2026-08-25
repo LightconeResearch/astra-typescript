@@ -14,3 +14,8 @@ export {
   semanticValidateAnalysisFile,
   semanticValidateUniverseFile,
 } from "./semantic.js";
+
+export {
+  RECOMMENDED_UNTIL,
+  collectRecommendations,
+} from "./recommendations.js";

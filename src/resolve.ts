@@ -31,7 +31,14 @@ import type {
   Universe,
   UniverseNode,
 } from "./types.js";
-import { validateAnalysis as validateAnalysisSemantics } from "./validation/semantic.js";
+import {
+  getDecisionOptions,
+  getDecisionSelections,
+} from "./helpers.js";
+import {
+  validateAnalysis as validateAnalysisSemantics,
+  validateAnalysisRootFields,
+} from "./validation/semantic.js";
 import {
   validateAnalysisStructure,
   validateUniverseStructure,
@@ -66,7 +73,6 @@ export type ResolveAnalysisErrorCode =
   | "READ_FAILED"
   | "INVALID_YAML"
   | "UNIVERSE_NOT_FOUND"
-  | "UNSUPPORTED_ASTRA_VERSION"
   | "UNSUPPORTED_INLINE_UNIVERSE_REFERENCE"
   | "PROJECT_PATH_ESCAPE";
 
@@ -127,6 +133,11 @@ interface AliasTarget<T> {
   canonicalPath: string;
 }
 
+interface AliasResolution<T> extends AliasTarget<T> {
+  /** Direct target, retained so alias activity can be evaluated link by link. */
+  immediate: AliasTarget<T>;
+}
+
 const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 function asDict(value: unknown): Dict | undefined {
@@ -142,12 +153,12 @@ function liftMapIds(data: Dict): void {
     for (const [id, raw] of Object.entries(mapping)) {
       const value = asDict(raw);
       if (!value) continue;
-      if (value.id === undefined) value.id = id;
+      if (value.id == null) value.id = id;
       if (field === "decisions") {
         const options = asDict(value.options);
         if (options) for (const [optionId, rawOption] of Object.entries(options)) {
           const option = asDict(rawOption);
-          if (option && option.id === undefined) option.id = optionId;
+          if (option && option.id == null) option.id = optionId;
         }
       }
     }
@@ -286,25 +297,15 @@ async function readMapping(
   }
 }
 
-function checkVersion(data: Dict, file: string): void {
-  const version = data.version;
-  if (version === undefined) return;
-  if (version !== "1.0" && version !== "1.0.0") {
-    throw new ResolveAnalysisError(
-      "UNSUPPORTED_ASTRA_VERSION",
-      `Unsupported ASTRA version ${JSON.stringify(version)} in ${file}`,
-      file,
-    );
-  }
-}
-
 function pushIssue(
   issues: ValidationIssue[],
   issue: ValidationIssue,
 ): void {
-  const key = `${issue.code}\0${issue.file}\0${issue.path ?? ""}`;
   if (!issues.some((candidate) =>
-    `${candidate.code}\0${candidate.file}\0${candidate.path ?? ""}` === key)) {
+    candidate.code === issue.code
+    && candidate.message === issue.message
+    && candidate.file === issue.file
+    && candidate.path === issue.path)) {
     issues.push(issue);
   }
 }
@@ -387,7 +388,6 @@ async function loadAnalysisFile(
     );
   }
   const data = await readMapping(reader, file);
-  checkVersion(data, file);
   liftMapIds(data);
   const context = {
     data: data as Analysis,
@@ -447,8 +447,7 @@ async function loadChildren(
       });
     } else {
       const cloned = structuredClone(childData) as Analysis;
-      if (cloned.id === undefined) cloned.id = id;
-      checkVersion(cloned as Dict, context.file);
+      if (cloned.id == null) cloned.id = id;
       liftMapIds(cloned as Dict);
       child = {
         data: cloned,
@@ -480,7 +479,7 @@ function mapKeyIssue(
   path: string,
   issues: ValidationIssue[],
 ): void {
-  if (value.id !== undefined && value.id !== key) {
+  if (value.id != null && value.id !== key) {
     pushIssue(issues, {
       code: "MAP_KEY_ID_MISMATCH",
       message: `Inline id ${JSON.stringify(value.id)} must match map key '${key}'`,
@@ -494,7 +493,7 @@ function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]):
   for (const context of walkLoaded(root)) {
     if (context.pathBacked
       && context.id
-      && context.data.id !== undefined
+      && context.data.id != null
       && context.data.id !== context.id) {
       pushIssue(issues, {
         code: "MAP_KEY_ID_MISMATCH",
@@ -546,6 +545,18 @@ function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]):
     file: string,
     path: string,
   ): void => {
+    for (const [id, raw] of Object.entries(asDict(node.decisions) ?? {})) {
+      const selection = asDict(raw);
+      if (typeof selection?.decision_id === "string" && selection.decision_id !== id) {
+        const selectionPath = `${path ? `${path}.` : ""}decisions.${id}`;
+        pushIssue(issues, {
+          code: "MAP_KEY_ID_MISMATCH",
+          message: `Decision id ${JSON.stringify(selection.decision_id)} must match map key '${id}'`,
+          file,
+          path: `${selectionPath}.decision_id`,
+        });
+      }
+    }
     for (const [id, raw] of Object.entries(node.analyses ?? {})) {
       const value = asDict(raw);
       if (!value) continue;
@@ -597,6 +608,18 @@ function validateLoadedSemantics(
   root: LoadedAnalysis,
   issues: ValidationIssue[],
 ): void {
+  for (const context of walkLoaded(root)) {
+    if (context !== context.physicalRoot) continue;
+    for (const error of validateAnalysisRootFields(context.data)) {
+      pushIssue(issues, {
+        code: error.code,
+        message: error.message,
+        file: context.file,
+        path: error.path,
+      });
+    }
+  }
+
   const contexts = walkLoaded(root).sort(
     (left, right) => right.canonicalSegments.length - left.canonicalSegments.length,
   );
@@ -615,6 +638,11 @@ function validateLoadedSemantics(
           break;
         }
       }
+    }
+    if (error.code === "MISSING_SUB_FIELD" && owner.pathBacked) {
+      // The physical-root pass reports the same missing inputs/outputs with
+      // precise local paths.
+      continue;
     }
     const localPrefix = owner.authoredSegments
       .flatMap((segment) => ["analyses", segment])
@@ -674,7 +702,7 @@ function buildSelectionPlan(
       const childId = child.id!;
       const childSelection = universeChild(data, childId);
       const childPath = [pathPrefix, "analyses", childId].filter(Boolean).join(".");
-      if (childSelection.universe !== undefined) {
+      if (typeof childSelection.universe === "string") {
         if (!child.pathBacked) {
           throw new ResolveAnalysisError(
             "UNSUPPORTED_INLINE_UNIVERSE_REFERENCE",
@@ -725,7 +753,16 @@ function localOutputs(context: LoadedAnalysis): Output[] {
 }
 
 function localDecisions(context: LoadedAnalysis): Record<string, Decision> {
-  return asDict(context.data.decisions) as unknown as Record<string, Decision> ?? {};
+  const decisions: Record<string, Decision> = {};
+  for (const [id, raw] of Object.entries(asDict(context.data.decisions) ?? {})) {
+    const decision = asDict(raw);
+    if (decision) decisions[id] = decision as unknown as Decision;
+  }
+  return decisions;
+}
+
+function decisionOptions(decision: Decision): Record<string, Option> {
+  return getDecisionOptions(decision as unknown as Dict) as unknown as Record<string, Option>;
 }
 
 function localInsights(
@@ -753,8 +790,8 @@ function parseUpwardReference(reference: string): { up: number; rest: string[] }
 
 class ProjectResolver {
   private readonly inputAliases = new Map<Input, AliasTarget<Input | Output>>();
-  private readonly outputAliases = new Map<Output, AliasTarget<Output>>();
-  private readonly decisionAliases = new Map<Decision, AliasTarget<Decision>>();
+  private readonly outputAliases = new Map<Output, AliasResolution<Output>>();
+  private readonly decisionAliases = new Map<Decision, AliasResolution<Decision>>();
   private readonly selectedMemo = new Map<Decision, string | undefined>();
   private readonly decisionActiveMemo = new Map<Decision, boolean>();
   private readonly outputActiveMemo = new Map<Output, boolean>();
@@ -886,7 +923,7 @@ class ProjectResolver {
     context: LoadedAnalysis,
     output: Output,
     chain = new Set<Input | Output>(),
-  ): AliasTarget<Output> | undefined {
+  ): AliasResolution<Output> | undefined {
     const cached = this.outputAliases.get(output);
     if (cached) return cached;
     if (chain.has(output)) {
@@ -908,13 +945,22 @@ class ProjectResolver {
       this.error(context, "INVALID_OUTPUT_FROM", `Output alias target '${reference}' does not exist`);
       return undefined;
     }
-    const resolved = target.from
+    const immediate = {
+      context: targetContext,
+      value: target,
+      canonicalPath: recordPath(targetContext, "outputs", target.id),
+    };
+    const ultimate = target.from
       ? this.resolveOutputAlias(targetContext, target, chain)
-      : {
-          context: targetContext,
-          value: target,
-          canonicalPath: recordPath(targetContext, "outputs", target.id),
-        };
+      : immediate;
+    const resolved = ultimate
+      ? {
+          context: ultimate.context,
+          value: ultimate.value,
+          canonicalPath: ultimate.canonicalPath,
+          immediate,
+        }
+      : undefined;
     if (resolved) this.outputAliases.set(output, resolved);
     return resolved;
   }
@@ -923,7 +969,7 @@ class ProjectResolver {
     context: LoadedAnalysis,
     decision: Decision,
     chain = new Set<Decision>(),
-  ): AliasTarget<Decision> | undefined {
+  ): AliasResolution<Decision> | undefined {
     const cached = this.decisionAliases.get(decision);
     if (cached) return cached;
     if (chain.has(decision)) {
@@ -940,13 +986,22 @@ class ProjectResolver {
       this.error(context, "INVALID_DECISION_FROM", `Decision alias target '${decision.from}' does not exist`);
       return undefined;
     }
-    const resolved = target.from
+    const immediate = {
+      context: owner,
+      value: target,
+      canonicalPath: recordPath(owner, "decisions", targetId!),
+    };
+    const ultimate = target.from
       ? this.resolveDecisionAlias(owner, target, chain)
-      : {
-          context: owner,
-          value: target,
-          canonicalPath: recordPath(owner, "decisions", targetId!),
-        };
+      : immediate;
+    const resolved = ultimate
+      ? {
+          context: ultimate.context,
+          value: ultimate.value,
+          canonicalPath: ultimate.canonicalPath,
+          immediate,
+        }
+      : undefined;
     if (resolved) this.decisionAliases.set(decision, resolved);
     return resolved;
   }
@@ -961,7 +1016,7 @@ class ProjectResolver {
       const state = this.plan.states.get(context);
       selected = state?.mode === "defaults"
         ? decision.default
-        : state?.data.decisions?.[decision.id!];
+        : state && getDecisionSelections(state.data as unknown as Dict)[decision.id!];
     }
     this.selectedMemo.set(decision, selected);
     return selected;
@@ -982,7 +1037,7 @@ class ProjectResolver {
       const effective = decision?.from
         ? this.resolveDecisionAlias(context, decision)?.value
         : decision;
-      if (!decision || !effective || !effective.options?.[parts[1]!]) {
+      if (!decision || !effective || !decisionOptions(effective)[parts[1]!]) {
         this.error(context, "INVALID_CONDITION", `Condition '${condition}' does not resolve`, path);
         active = false;
         continue;
@@ -1002,7 +1057,7 @@ class ProjectResolver {
       authoredPath(context, "decisions", decision.id),
     );
     const target = decision.from
-      ? this.resolveDecisionAlias(context, decision)
+      ? this.resolveDecisionAlias(context, decision)?.immediate
       : undefined;
     const active = own && (!target || this.decisionActive(target.context, target.value));
     this.decisionActiveMemo.set(decision, active);
@@ -1017,7 +1072,9 @@ class ProjectResolver {
       output.when,
       authoredPath(context, "outputs", output.id),
     );
-    const target = output.from ? this.resolveOutputAlias(context, output) : undefined;
+    const target = output.from
+      ? this.resolveOutputAlias(context, output)?.immediate
+      : undefined;
     const active = own && (!target || this.outputActive(target.context, target.value));
     this.outputActiveMemo.set(output, active);
     return active;
@@ -1025,7 +1082,7 @@ class ProjectResolver {
 
   private validateSelection(context: LoadedAnalysis): void {
     const state = this.plan.states.get(context)!;
-    const selections = state.data.decisions ?? {};
+    const selections = getDecisionSelections(state.data as unknown as Dict);
     const decisions = localDecisions(context);
     const selectionPath = (id: string): string =>
       [state.pathPrefix, "decisions", id].filter(Boolean).join(".");
@@ -1049,7 +1106,7 @@ class ProjectResolver {
         );
       } else {
         const selected = selections[id]!;
-        const option = decision.options?.[selected];
+        const option = decisionOptions(decision)[selected];
         if (!option) {
           this.error(
             context,
@@ -1100,7 +1157,7 @@ class ProjectResolver {
         );
         continue;
       }
-      const option = decision.options?.[selected];
+      const option = decisionOptions(decision)[selected];
       if (!option) {
         this.error(
           context,
@@ -1130,7 +1187,7 @@ class ProjectResolver {
       if (decision.from) continue;
       const selected = effectiveSelections[id];
       if (!selected) continue;
-      const option = decision.options?.[selected];
+      const option = decisionOptions(decision)[selected];
       for (const reference of option?.incompatible_with ?? []) {
         const [otherDecision, otherOption, extra] = reference.split(".");
         if (extra !== undefined || !otherDecision || !otherOption) continue;
@@ -1205,7 +1262,7 @@ class ProjectResolver {
     for (const decision of Object.values(localDecisions(context))) {
       const target = decision.from ? this.resolveDecisionAlias(context, decision) : undefined;
       if (target) continue;
-      for (const [optionId, option] of Object.entries(decision.options ?? {})) {
+      for (const [optionId, option] of Object.entries(decisionOptions(decision))) {
         for (const insightId of option.insights ?? []) {
           if (!localInsights(context, "prior_insights")[insightId]) {
             this.error(
@@ -1285,7 +1342,7 @@ class ProjectResolver {
       inputs: localInputs(context).map((input) => this.projectInput(context, input)),
       outputs: localOutputs(context).map((output) => this.projectOutput(context, output)),
       decisions: Object.entries(localDecisions(context)).map(([id, decision]) =>
-        this.projectDecision(context, { ...decision, id })),
+        this.projectDecision(context, id, decision)),
       prior_insights: Object.entries(localInsights(context, "prior_insights")).map(([id, insight]) =>
         this.projectInsight(context, "prior_insight", { ...insight, id })),
       findings: Object.entries(localInsights(context, "findings")).map(([id, insight]) =>
@@ -1355,7 +1412,8 @@ class ProjectResolver {
 
   private projectDecision(
     context: LoadedAnalysis,
-    decision: Decision & { id: string },
+    id: string,
+    decision: Decision,
   ): ResolvedDecision {
     const target = decision.from ? this.resolveDecisionAlias(context, decision)! : undefined;
     const source = target?.value ?? decision;
@@ -1367,15 +1425,15 @@ class ProjectResolver {
       options: _sourceOptions,
       ...sourceContent
     } = source;
-    const options = Object.entries(source.options ?? {}).map(([id, option]) =>
+    const options = Object.entries(decisionOptions(source)).map(([id, option]) =>
       this.projectOption(sourceContext, id, option));
     const selectedOptionId = this.selectedOption(context, decision);
     return {
       ...sourceContent,
-      id: decision.id,
+      id,
       ...(decision.from ? { from: decision.from } : {}),
       ...(decision.when !== undefined ? { when: decision.when } : {}),
-      canonicalPath: recordPath(context, "decisions", decision.id),
+      canonicalPath: recordPath(context, "decisions", id),
       kind: "decision",
       label: source.label!,
       active: this.decisionActive(context, decision),

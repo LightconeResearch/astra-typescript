@@ -1,6 +1,7 @@
 export type {
   Analysis,
   Decision,
+  DecisionSelection,
   Evidence,
   FragmentSelector,
   Input,

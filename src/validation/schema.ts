@@ -97,7 +97,7 @@ export async function validateAnalysisStructure(
   const schema = await resolveSchema(opts);
   const { analysis } = compileFor(schema);
   const prepared = structuredClone(data);
-  if (prepared.id === undefined) prepared.id = "root";
+  if (prepared.id == null) prepared.id = "root";
   injectAnalysisIdsInPlace(prepared);
   return analysis(prepared) ? [] : structuredErrors(analysis);
 }

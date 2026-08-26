@@ -7,7 +7,7 @@ import { collectRecommendations, validateAnalysis } from "../src/index.js";
 import { resolveAnalysisTree } from "../src/node.js";
 
 const analysis = (outputs: unknown[], extra: Record<string, unknown> = {}) => ({
-  version: "1.0",
+  version: "0.0.14",
   name: "Recommendations",
   inputs: [{ id: "catalog", type: "data", source: "data/catalog.csv" }],
   outputs,
@@ -64,7 +64,7 @@ describe("collectRecommendations", () => {
       await mkdir(join(root, "sub"));
       await writeFile(
         join(root, "sub", "astra.yaml"),
-        "version: \"1.0\"\nname: Sub\ninputs: []\noutputs:\n  - id: result\n    type: metric\n",
+        "version: \"0.0.14\"\nname: Sub\ninputs: []\noutputs:\n  - id: result\n    type: metric\n",
       );
       const data = analysis([], { analyses: { child: { path: "sub" } } });
 

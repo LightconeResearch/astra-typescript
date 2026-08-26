@@ -17,7 +17,7 @@ import { createNodeProjectReader } from "../src/node.js";
 import { getTestSchema } from "./setup.js";
 
 const BASIC_ANALYSIS = `
-version: "1.0"
+version: "0.0.14"
 name: Resolver example
 inputs:
   - id: catalog
@@ -41,7 +41,7 @@ outputs:
 `;
 
 const NESTED_ANALYSIS = `
-version: "1.0"
+version: "0.0.14"
 name: Recursive example
 inputs:
   - id: catalog
@@ -126,6 +126,7 @@ describe("resolveAnalysis", () => {
     const document = bundle.document;
 
     expect(document.schemaVersion).toBe("astra-resolved-analysis.v1");
+    expect(document.analysis.version).toBe("0.0.14");
     expect(document.universe).toEqual({
       universeId: "baseline",
       availableUniverseIds: ["baseline"],
@@ -261,6 +262,37 @@ describe("resolveAnalysis", () => {
     });
   });
 
+  it("normalizes scalar options and verbose universe selections", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      BASIC_ANALYSIS.replace(
+        `      natural:
+        label: Natural
+      weighted:
+        label: Weighted`,
+        `      natural: Natural
+      weighted: Weighted`,
+      ),
+    );
+    await writeUniverse(
+      "weighted",
+      `id: weighted
+decisions:
+  estimator:
+    option_id: weighted
+`,
+    );
+
+    const bundle = await resolveAnalysis(createNodeProjectReader(root));
+    expect(bundle.document.analysis.decisions[0]).toMatchObject({
+      selectedOptionId: "weighted",
+      options: [
+        { id: "natural", label: "Natural", resolvedInsightPaths: [] },
+        { id: "weighted", label: "Weighted", resolvedInsightPaths: [] },
+      ],
+    });
+  });
+
   it("reports nested universe issues at their authored YAML paths", async () => {
     await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
     await writeUniverse(
@@ -289,7 +321,7 @@ analyses:
   it("evaluates inherited option constraints only in their defining scope", async () => {
     await writeFile(
       join(root, "astra.yaml"),
-      `version: "1.0"
+      `version: "0.0.14"
 name: Alias constraints
 inputs: []
 outputs: []
@@ -328,7 +360,7 @@ analyses:
   it("loads named universes for path-backed analyses and resets result namespaces", async () => {
     await writeFile(
       join(root, "astra.yaml"),
-      `version: "1.0"
+      `version: "0.0.14"
 name: Root
 inputs: []
 outputs:
@@ -348,7 +380,7 @@ analyses:
     await writeFile(
       join(childRoot, "astra.yaml"),
       `id: child
-version: "1.0"
+version: "0.0.14"
 name: Child
 inputs: []
 outputs:
@@ -403,10 +435,104 @@ analyses:
     });
   });
 
+  it("treats a null child universe reference as absent", async () => {
+    await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
+    await writeUniverse(
+      "baseline",
+      `id: baseline
+decisions:
+  method: robust
+analyses:
+  stage:
+    universe: null
+    decisions: {}
+`,
+    );
+
+    const bundle = await resolveAnalysis(createNodeProjectReader(root));
+    expect(bundle.document.analysis.analyses[0]!.decisions[0]!.selectedOptionId).toBe("robust");
+  });
+
+  it("evaluates activity through every alias in a chain", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      `version: "0.0.14"
+name: Alias activity chain
+inputs: []
+outputs:
+  - id: exported
+    from: stage.forwarded
+decisions:
+  source:
+    label: Source
+    default: standard
+    options:
+      standard: Standard
+  activation:
+    label: Activation
+    default: "off"
+    options:
+      "off": Off
+      "on": On
+analyses:
+  stage:
+    inputs: []
+    outputs:
+      - id: forwarded
+        from: leaf.plot
+        when: [activation.on]
+    decisions:
+      activation:
+        from: ../activation
+      middle:
+        from: ../source
+        when: [activation.on]
+    analyses:
+      leaf:
+        inputs: []
+        outputs:
+          - id: plot
+            type: figure
+            format: png
+            decisions: [inherited]
+            when: [inherited.standard]
+        decisions:
+          inherited:
+            from: ../middle
+`,
+    );
+    await mkdir(join(root, "results", "default"), { recursive: true });
+    await writeFile(join(root, "results", "default", "stage.leaf.plot.png"), "png");
+
+    const bundle = await resolveAnalysis(createNodeProjectReader(root));
+    const stage = bundle.document.analysis.analyses[0]!;
+    const leaf = stage.analyses[0]!;
+    expect(outputAt(bundle.document.analysis.outputs, "exported")).toMatchObject({
+      active: false,
+      resolvedFrom: "stage.leaf.outputs.plot",
+    });
+    expect(outputAt(stage.outputs, "forwarded")).toMatchObject({
+      active: false,
+      resolvedFrom: "stage.leaf.outputs.plot",
+    });
+    expect(outputAt(leaf.outputs, "plot").active).toBe(true);
+    expect(stage.decisions.find((decision) => decision.id === "middle")).toMatchObject({
+      active: false,
+      resolvedFrom: "decisions.source",
+    });
+    expect(leaf.decisions[0]).toMatchObject({
+      active: false,
+      resolvedFrom: "decisions.source",
+    });
+    expect(bundle.bindings.map((binding) => binding.outputPath)).toEqual([
+      "stage.leaf.outputs.plot",
+    ]);
+  });
+
   it("rejects deterministic filename collisions", async () => {
     await writeFile(
       join(root, "astra.yaml"),
-      `version: "1.0"
+      `version: "0.0.14"
 name: Collision
 inputs: []
 outputs:
@@ -443,6 +569,113 @@ analyses:
       const codes = (error as AnalysisValidationError).issues.map((issue) => issue.code);
       expect(codes).toContain("SCHEMA_PATTERN");
       expect(codes).toContain("INVALID_OUTPUT_INPUT");
+    }
+  });
+
+  it("reports a null decision as a validation issue", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      `version: "0.0.14"
+name: Missing decision
+inputs: []
+outputs: []
+decisions:
+  missing: null
+`,
+    );
+
+    await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "MISSING_DECISION_DEFINITION",
+          file: "astra.yaml",
+          path: "decisions.missing",
+        }),
+      ]),
+    });
+  });
+
+  it("validates required root fields in every path-backed analysis", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      `version: "0.0.14"
+name: Root
+inputs:
+  - id: catalog
+    type: data
+outputs: []
+analyses:
+  child:
+    path: packages/child
+`,
+    );
+    await mkdir(join(root, "packages", "child"), { recursive: true });
+    await writeFile(
+      join(root, "packages", "child", "astra.yaml"),
+      `id: child
+inputs: []
+outputs: []
+analyses:
+  grandchild:
+    inputs:
+      - id: source
+        from: ../../catalog
+    outputs: []
+`,
+    );
+
+    try {
+      await resolveAnalysis(createNodeProjectReader(root));
+      throw new Error("expected validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AnalysisValidationError);
+      const issues = (error as AnalysisValidationError).issues;
+      expect(issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: "MISSING_ROOT_FIELD",
+          file: "packages/child/astra.yaml",
+          path: "version",
+        }),
+        expect.objectContaining({
+          code: "MISSING_ROOT_FIELD",
+          file: "packages/child/astra.yaml",
+          path: "name",
+        }),
+      ]));
+      expect(issues).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "INVALID_FROM" }),
+      ]));
+    }
+  });
+
+  it("keeps distinct validation issues that share a path", async () => {
+    await writeFile(
+      join(root, "astra.yaml"),
+      `version: "0.0.14"
+name: Complete errors
+inputs: []
+outputs:
+  - id: result
+    type: data
+    format: json
+    inputs: [missing_a, missing_b]
+`,
+    );
+
+    try {
+      await resolveAnalysis(createNodeProjectReader(root));
+      throw new Error("expected validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AnalysisValidationError);
+      const issues = (error as AnalysisValidationError).issues.filter(
+        (issue) => issue.code === "INVALID_OUTPUT_INPUT",
+      );
+      expect(issues).toHaveLength(2);
+      expect(issues.map((issue) => issue.message)).toEqual(expect.arrayContaining([
+        expect.stringContaining("missing_a"),
+        expect.stringContaining("missing_b"),
+      ]));
+      expect(issues.every((issue) => issue.path === "outputs.result.inputs")).toBe(true);
     }
   });
 
@@ -501,7 +734,7 @@ describe("createNodeProjectReader", () => {
     try {
       await writeFile(
         join(root, "astra.yaml"),
-        `version: "1.0"
+        `version: "0.0.14"
 name: Escape
 inputs: []
 outputs: []

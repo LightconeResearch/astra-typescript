@@ -46,10 +46,34 @@ export function isConditionMet(
 /** Locally-defined decisions on a node — `from:` aliases are skipped. */
 export function collectNodeDecisions(node: Dict): Record<string, Decision> {
   const out: Record<string, Decision> = {};
-  const decisions = (node.decisions ?? {}) as Record<string, Decision>;
-  for (const [id, decision] of Object.entries(decisions)) {
-    if (decision && typeof decision === "object" && (decision as Decision).from) continue;
-    out[id] = decision;
+  const decisions = asDict(node.decisions) ?? {};
+  for (const [id, raw] of Object.entries(decisions)) {
+    const decision = asDict(raw);
+    if (!decision || decision.from) continue;
+    out[id] = decision as unknown as Decision;
+  }
+  return out;
+}
+
+/** Return decision options in their canonical object form. */
+export function getDecisionOptions(decision: Dict): Record<string, Dict> {
+  const out: Record<string, Dict> = {};
+  for (const [id, raw] of Object.entries(asDict(decision.options) ?? {})) {
+    if (typeof raw === "string") out[id] = { label: raw };
+    else {
+      const option = asDict(raw);
+      if (option) out[id] = option;
+    }
+  }
+  return out;
+}
+
+/** Normalize scalar and verbose universe selections to option ids. */
+export function getDecisionSelections(node: Dict): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [id, raw] of Object.entries(asDict(node.decisions) ?? {})) {
+    const optionId = typeof raw === "string" ? raw : asDict(raw)?.option_id;
+    if (typeof optionId === "string") out[id] = optionId;
   }
   return out;
 }
@@ -70,7 +94,7 @@ function injectMapKeysAsIds(map: Dict, recurse?: (value: Dict) => void): void {
   for (const [key, value] of Object.entries(map)) {
     const obj = asDict(value);
     if (!obj) continue;
-    if (obj.id === undefined) obj.id = key;
+    if (obj.id == null) obj.id = key;
     if (recurse) recurse(obj);
   }
 }

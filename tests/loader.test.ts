@@ -1,8 +1,4 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, existsSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import {
   astraSchemaUrl,
@@ -24,35 +20,19 @@ describe("astraSchemaUrl", () => {
 });
 
 describe("loadAstraSchema", () => {
-  it("loads from a file:// URL", async () => {
-    // Write a minimal schema stub to a temp file and load it. This
-    // exercises the file:// branch without requiring any external fetch.
-    const dir = mkdtempSync(join(tmpdir(), "astra-schema-stub-"));
-    const path = join(dir, "schema.json");
-    writeFileSync(path, JSON.stringify({ $defs: { Analysis: {}, Universe: {} } }));
-    const url = pathToFileURL(path).href;
-
-    const schema = await loadAstraSchema({ url, cacheDir: false });
+  it("loads from a fetchable URL without Node filesystem APIs", async () => {
+    const body = JSON.stringify({ $defs: { Analysis: {}, Universe: {} } });
+    const url = `data:application/json,${encodeURIComponent(body)}`;
+    const schema = await loadAstraSchema({ url });
     expect(schema).toHaveProperty("$defs");
     expect((schema as { $defs: Record<string, unknown> }).$defs).toHaveProperty("Analysis");
   });
 
-  it("writes a disk cache entry and reuses it", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "astra-schema-stub-"));
-    const path = join(dir, "schema.json");
-    writeFileSync(path, JSON.stringify({ $defs: { Analysis: {}, Universe: {} } }));
-    const url = pathToFileURL(path).href;
-
-    const cacheDir = mkdtempSync(join(tmpdir(), "astra-schema-cache-test-"));
-    await loadAstraSchema({ url, cacheDir });
-    expect(existsSync(cacheDir)).toBe(true);
-    expect(readdirSync(cacheDir).length).toBe(1);
-
-    // After clearing the in-memory cache, a second call still succeeds
-    // because the disk cache satisfies it.
-    clearAstraSchemaCache();
-    const schema = await loadAstraSchema({ url, cacheDir });
-    expect(schema).toHaveProperty("$defs");
+  it("reuses its browser-safe in-memory cache", async () => {
+    const url = `data:application/json,${encodeURIComponent(JSON.stringify({ title: "schema" }))}`;
+    const first = await loadAstraSchema({ url });
+    const second = await loadAstraSchema({ url });
+    expect(second).toBe(first);
   });
 });
 

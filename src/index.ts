@@ -17,11 +17,9 @@ export type {
 } from "./types.js";
 
 export {
-  loadYaml,
   parseYamlString,
   isConditionMet,
   collectNodeDecisions,
-  resolveAnalysisTree,
   injectAnalysisIdsInPlace,
   injectUniverseIdsInPlace,
   getInputIds,
@@ -31,15 +29,12 @@ export {
 export {
   validateAnalysisData,
   validateUniverseData,
-  validateAnalysisFile,
-  validateUniverseFile,
-  isValidAnalysis,
-  isValidUniverse,
+  validateAnalysisStructure,
+  validateUniverseStructure,
+  type SchemaValidationIssue,
   SemanticError,
   validateAnalysis,
   validateUniverse,
-  semanticValidateAnalysisFile,
-  semanticValidateUniverseFile,
   RECOMMENDED_UNTIL,
   collectRecommendations,
 } from "./validation/index.js";
@@ -54,4 +49,13 @@ export {
   clearAstraSchemaCache,
 } from "./schema/index.js";
 
-export * from "./view-model/index.js";
+export type {
+  ProjectReader,
+  ProjectEntry,
+  ProjectDirectoryEntry,
+} from "./project-reader.js";
+export { ProjectPathError } from "./project-reader.js";
+
+export * from "./resolved-types.js";
+export * from "./resolve.js";
+export * from "./index-analysis.js";

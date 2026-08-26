@@ -1,20 +1,13 @@
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { loadAstraSchema, type JsonSchema } from "../src/schema/index.js";
+import type { JsonSchema } from "../src/schema/index.js";
 
-// Schema is fetched from astra-spec.org (cached on disk for re-runs).
-// Fixtures and examples are vendored locally because the astra-spec
-// GitHub repo is currently private and the docs site only publishes
-// schema artifacts; if astra-spec is made public we can switch the
-// fixture path to a fetch helper.
-
-const SCHEMA_URL =
-  process.env.ASTRA_SPEC_SCHEMA_URL ?? "https://astra-spec.org/latest/schema/astra.schema.json";
-
-const SCHEMA_CACHE_DIR = join(tmpdir(), "astra-spec-schema-cache");
+// Use the generated schema from the canonical sibling checkout so tests are
+// deterministic and exercise the same contract as astra-spec.
 
 const FIXTURES_DIR = resolve(__dirname, "fixtures");
+const SCHEMA_PATH = resolve(__dirname, "../../astra-spec/docs/schema/astra.schema.json");
 
 export const FIXTURES = {
   validAnalysis: join(FIXTURES_DIR, "valid/Analysis-001.yaml"),
@@ -27,12 +20,8 @@ export const FIXTURES = {
 
 let _testSchema: JsonSchema | undefined;
 
-/** Load the ASTRA JSON Schema. Defaults to
- *  `https://astra-spec.org/latest/schema/astra.schema.json`; override with
- *  `ASTRA_SPEC_SCHEMA_URL` (e.g. for pinning a version, or pointing at a
- *  local file:// during development). */
 export async function getTestSchema(): Promise<JsonSchema> {
   if (_testSchema) return _testSchema;
-  _testSchema = await loadAstraSchema({ url: SCHEMA_URL, cacheDir: SCHEMA_CACHE_DIR });
+  _testSchema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8")) as JsonSchema;
   return _testSchema;
 }

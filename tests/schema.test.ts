@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   validateAnalysisFile,
   validateUniverseFile,
-} from "../src/validation/schema.js";
+} from "../src/node.js";
 import { FIXTURES, getTestSchema } from "./setup.js";
 import type { JsonSchema } from "../src/schema/index.js";
 

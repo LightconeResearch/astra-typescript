@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   validateAnalysis,
-  semanticValidateAnalysisFile,
   validateUniverse,
   SemanticError,
 } from "../src/validation/semantic.js";
-import { loadYaml } from "../src/helpers.js";
+import { loadYaml, semanticValidateAnalysisFile } from "../src/node.js";
 import { FIXTURES } from "./setup.js";
 
 const codes = (errs: SemanticError[]): string[] => errs.map((e) => e.code);

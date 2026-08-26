@@ -1,5 +1,3 @@
-import { dirname } from "node:path";
-
 import {
   type Dict,
   asArray,
@@ -8,8 +6,6 @@ import {
   getInputIds,
   getOutputIds,
   isConditionMet,
-  loadYaml,
-  resolveAnalysisTree,
 } from "../helpers.js";
 import type { Analysis } from "../types.js";
 
@@ -68,17 +64,12 @@ function checkPathExclusivity(data: Dict, errors: SemanticError[], pathPrefix = 
 /** Validate an Analysis dict semantically. Returns the list of errors. */
 export function validateAnalysis(
   data: Analysis | Dict,
-  options: { basePath?: string } = {},
 ): SemanticError[] {
   const errors: SemanticError[] = [];
-  let working = data as Dict;
+  const working = data as Dict;
 
   // Run before any external `path:` resolution merges over content fields.
   checkPathExclusivity(working, errors);
-
-  if (options.basePath) {
-    working = resolveAnalysisTree(working, options.basePath);
-  }
 
   for (const field of ["version", "name", "inputs", "outputs"]) {
     if (working[field] == null) {
@@ -1080,15 +1071,4 @@ function _validateNodeUniverseConstraints(
     }
   }
   return errors;
-}
-
-export function semanticValidateAnalysisFile(filePath: string): SemanticError[] {
-  return validateAnalysis(loadYaml(filePath), { basePath: dirname(filePath) });
-}
-
-export function semanticValidateUniverseFile(
-  universePath: string,
-  analysisPath: string,
-): SemanticError[] {
-  return validateUniverse(loadYaml(universePath), loadYaml(analysisPath));
 }

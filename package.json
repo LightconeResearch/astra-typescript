@@ -18,13 +18,9 @@
       "types": "./dist/schema/index.d.ts",
       "import": "./dist/schema/index.js"
     },
-    "./view-model": {
-      "types": "./dist/view-model/index.d.ts",
-      "import": "./dist/view-model/index.js"
-    },
-    "./view-model/node": {
-      "types": "./dist/view-model/node.d.ts",
-      "import": "./dist/view-model/node.js"
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "files": [

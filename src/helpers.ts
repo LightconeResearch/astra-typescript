@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { isAbsolute, resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { Decision, Input, Output } from "./types.js";
@@ -20,10 +18,6 @@ export function parseYamlString(text: string): Dict {
     throw new Error("YAML root must be a mapping/object");
   }
   return data as Dict;
-}
-
-export function loadYaml(filePath: string): Dict {
-  return parseYamlString(readFileSync(filePath, "utf8"));
 }
 
 /** Evaluate a `when` clause against a flat decision selection. AND across
@@ -70,44 +64,6 @@ export function getOutputIds(node: Dict): Set<string> {
   const out = new Set<string>();
   for (const o of asArray<Output>(node.outputs)) if (o?.id) out.add(o.id);
   return out;
-}
-
-/** Walk `analyses.*.path` references and inline external `astra.yaml`
- *  files. Returns a new object only if at least one path was resolved. */
-export function resolveAnalysisTree(data: Dict, basePath: string): Dict {
-  const analyses = data.analyses;
-  if (!analyses || typeof analyses !== "object") return data;
-
-  const resolved: Dict = {};
-  let changed = false;
-  for (const [id, raw] of Object.entries(analyses)) {
-    const node = asDict(raw);
-    if (!node) {
-      resolved[id] = raw;
-      continue;
-    }
-    const subPath = node.path;
-    if (typeof subPath === "string" && subPath) {
-      const absDir = isAbsolute(subPath) ? subPath : resolvePath(basePath, subPath);
-      const yamlPath = resolvePath(absDir, "astra.yaml");
-      try {
-        const subData = loadYaml(yamlPath);
-        subData.path = subPath;
-        resolved[id] = resolveAnalysisTree(subData, absDir);
-        changed = true;
-      } catch {
-        // Missing file is surfaced by a higher layer; leave the stub here.
-        resolved[id] = node;
-      }
-    } else {
-      const sub = resolveAnalysisTree(node, basePath);
-      resolved[id] = sub;
-      if (sub !== node) changed = true;
-    }
-  }
-
-  if (!changed) return data;
-  return { ...data, analyses: resolved };
 }
 
 function injectMapKeysAsIds(map: Dict, recurse?: (value: Dict) => void): void {

@@ -1,10 +1,11 @@
 # astra-typescript
 
-TypeScript SDK for the **Agentic Schema for Transparent Research Analysis (ASTRA)** — published as `@astra-spec/sdk`.
+TypeScript SDK for the **Agentic Schema for Transparent Research Analysis
+(ASTRA)**, published as `@astra-spec/sdk`.
 
-Parse, validate, and inspect ASTRA analysis specifications. The package mirrors the validation surface of the Python `astra-tools` SDK and is intended as a foundation for downstream TypeScript tooling (editors, web validators, agent harnesses).
-
-The canonical specification lives at https://astra-spec.org/.
+The SDK parses and validates authored ASTRA data and resolves a complete project
+into one recursive, serializable document for viewers and integrations. The
+canonical specification lives at <https://astra-spec.org/>.
 
 ## Install
 
@@ -12,124 +13,121 @@ The canonical specification lives at https://astra-spec.org/.
 npm install @astra-spec/sdk
 ```
 
-Requires Node ≥18 (uses global `fetch`).
+## Resolve a project
 
-## Schema source
-
-The package does **not** bundle the JSON Schema. It fetches a frozen, versioned copy from astra-spec.org on first use and caches it:
-
-- in memory for the current process
-- on disk under `<tmpdir>/astra-schema-cache/<hash>.json` for re-runs
+The resolver depends on the small, read-only `ProjectReader` interface, so the
+same operation works with Node, JupyterLab, VS Code, or browser-local storage.
+Node projects can use the bundled adapter:
 
 ```ts
-import { loadAstraSchema, astraSchemaUrl } from "@astra-spec/sdk";
+import { resolveAnalysis } from "@astra-spec/sdk";
+import { createNodeProjectReader } from "@astra-spec/sdk/node";
 
-// Defaults to https://astra-spec.org/latest/schema/astra.schema.json
-await loadAstraSchema();
+const reader = createNodeProjectReader("/path/to/project");
+const bundle = await resolveAnalysis(reader, { universeId: "baseline" });
 
-// Pin a specific version
-await loadAstraSchema({ version: "0.0.10" });
-// → https://astra-spec.org/0.0.10/schema/astra.schema.json
-
-// Or supply your own URL (https:// or file://)
-await loadAstraSchema({ url: "file:///path/to/astra.schema.json" });
-
-// Or pre-install a schema you already have
-import { setAstraSchema } from "@astra-spec/sdk";
-setAstraSchema(mySchema, { version: "latest" });
+console.log(bundle.document.analysis.outputs);
+console.log(bundle.bindings);
 ```
 
-Disable disk caching with `cacheDir: false`. Force a refetch with `force: true`.
+`bundle.document` is host-neutral JSON data. It recursively retains the ASTRA
+analysis tree and includes resolved aliases, conditions, decision selections,
+provenance, evidence links, and artifact metadata. `bundle.bindings` stays on
+the host side and maps materialized outputs to project-relative files.
 
-## Validate an analysis
+Invalid projects reject with `AnalysisValidationError`; loading and storage
+failures reject with `ResolveAnalysisError`. A missing output artifact is not an
+error: the output simply has no `artifact` descriptor or binding.
+
+### Deterministic artifact paths
+
+The resolver computes artifact paths directly and never scans result folders:
+
+```text
+results/<universe-id>/<output-id>.<format>
+results/<universe-id>/<inline-child>.<output-id>.<format>
+```
+
+Nested inline analysis ids continue the dotted prefix. A child loaded through
+`Analysis.path` starts a new result namespace beside its own `astra.yaml`.
+Output aliases bind to their ultimate target file rather than creating a copy.
+
+Each available binding includes an opaque SHA-256 `cacheToken` derived from its
+path, modification time, and byte size. Hosts can use it to invalidate stable
+serving URLs without reading artifact bytes.
+
+## Other hosts
+
+An integration implements this contract around its native storage API:
 
 ```ts
-import {
-  validateAnalysisFile,          // structural (JSON Schema)
-  semanticValidateAnalysisFile,  // cross-references, constraints, from-paths
-} from "@astra-spec/sdk";
-
-const structural = await validateAnalysisFile("astra.yaml");          // string[]
-const semantic = semanticValidateAnalysisFile("astra.yaml");          // SemanticError[]
-
-if (structural.length || semantic.length) {
-  for (const e of [...structural, ...semantic]) console.error(String(e));
-  process.exit(1);
+interface ProjectReader {
+  readText(path: string): Promise<string>;
+  stat(path: string): Promise<ProjectEntry | undefined>;
+  readDirectory(path: string): Promise<ProjectDirectoryEntry[]>;
 }
 ```
 
-Pin to a specific spec version per call:
+All paths passed by the resolver are normalized POSIX paths relative to the
+chosen project root. `stat()` reports file size and integer Unix modification
+time in milliseconds. The exported `ProjectReader`, `ProjectEntry`, and
+`ProjectDirectoryEntry` types are the adapter contract.
 
-```ts
-await validateAnalysisFile("astra.yaml", { version: "0.0.10" });
-```
+## Validation and parsing
 
-### Recommended fields
-
-Some fields the schema marks `recommended` rather than `required`. Omitting one is not an error — the analysis is valid — but it will become one, so `collectRecommendations` reports it while there is still time to act:
-
-```ts
-import { collectRecommendations, loadYaml } from "@astra-spec/sdk";
-
-for (const note of collectRecommendations(loadYaml("astra.yaml"))) console.warn(note);
-// 2 outputs without a 'format': accuracy, conclusion. Optional today, required
-// from ASTRA 0.1.0 — add the artifact's file extension, e.g. 'format: png'.
-```
-
-For a multi-file project, pass `basePath` so sub-analyses declared with `path:` are loaded before the walk — without it they are unresolved stubs and their outputs are skipped:
-
-```ts
-collectRecommendations(loadYaml("astra.yaml"), { basePath: "." });
-```
-
-It is deliberately separate from `validateAnalysis`, whose `SemanticError[]` is an error-only channel: a recommendation must never make an analysis invalid. Currently the only one is `Output.format`, required on non-aliased outputs from ASTRA 0.1.0.
-
-## Validate a universe
+The root entry point is browser-safe and contains no `node:*` imports:
 
 ```ts
 import {
-  validateUniverseFile,   // structural
-  validateUniverse,       // semantic, against an analysis
-  loadYaml,
+  parseYamlString,
+  validateAnalysisData,
+  validateUniverseData,
+  validateAnalysis,
+  validateUniverse,
 } from "@astra-spec/sdk";
-
-const structural = await validateUniverseFile("universes/baseline.yaml");
-const semantic = validateUniverse(
-  loadYaml("universes/baseline.yaml"),
-  loadYaml("astra.yaml"),
-);
 ```
 
-## What ships
+Filesystem-oriented helpers live under the Node entry point:
 
-| Module | Exports |
-|---|---|
-| Schema loader | `loadAstraSchema`, `setAstraSchema`, `clearAstraSchemaCache`, `astraSchemaUrl`, `ASTRA_SPEC_HOST`, `JsonSchema`, `SchemaLoadOptions` |
-| Structural validation | `validateAnalysisData`, `validateAnalysisFile`, `validateUniverseData`, `validateUniverseFile`, `isValidAnalysis`, `isValidUniverse` (all async) |
-| Semantic validation | `validateAnalysis`, `validateUniverse`, `semanticValidateAnalysisFile`, `semanticValidateUniverseFile`, `SemanticError` |
-| Recommendations | `collectRecommendations`, `RECOMMENDED_UNTIL` |
-| Helpers | `loadYaml`, `parseYamlString`, `isConditionMet`, `collectNodeDecisions`, `resolveAnalysisTree`, `getInputIds`, `getOutputIds` |
-| Types | `Analysis`, `Universe`, `UniverseNode`, `Input`, `Output`, `Decision`, `Option`, `Recipe`, `Resources`, `Insight`, `Evidence`, `TextQuoteSelector`, `FragmentSelector` |
+```ts
+import {
+  loadYaml,
+  validateAnalysisFile,
+  validateUniverseFile,
+  semanticValidateAnalysisFile,
+} from "@astra-spec/sdk/node";
+```
 
-## Validation layers
+Structural validation uses the published JSON Schema. `loadAstraSchema()` uses
+`fetch` and an in-memory cache; callers can also install a preloaded schema with
+`setAstraSchema()`. Persistent caching belongs to the host.
 
-ASTRA validation is layered, matching the Python implementation:
+`collectRecommendations()` reports advisory fields such as an omitted output
+format. For multi-file workflows, preload path-backed children first or use
+`resolveAnalysis()`, which owns recursive loading.
 
-1. **Structural** — JSON Schema (Ajv, draft 2019-09). Shape, types, required fields, ID patterns, `from`-alias forbidden-field rules. Async because it fetches/loads the schema.
-2. **Semantic** — cross-references and constraint resolution: duplicate IDs, default option existence, `from:` direction rules, `Output.inputs` / `Output.decisions` resolution, recipe template placeholders, output dependency cycles, universe selections, constraint compatibility. Synchronous.
-3. **Advisory** — `collectRecommendations`, for fields that are recommended today and required in a future spec release. Never affects validity.
+## Optional indexes
+
+The resolved bundle contains no lookup maps. Build them only when needed:
+
+```ts
+import { indexAnalysis } from "@astra-spec/sdk";
+
+const index = indexAnalysis(bundle.document);
+const output = index.recordByPath.get("stage.outputs.figure");
+```
 
 ## Development
 
 ```bash
 npm install
-npm test          # vitest
-npm run build     # tsc → dist/
+npm test
 npm run typecheck
+npm run build
 ```
 
-The test suite runs offline against a sibling `astra-spec` checkout (expected at `../astra-spec` relative to this repo). It pulls the schema, fixtures, and example projects from there rather than vendoring copies.
+The tests use the canonical schema from a sibling `../astra-spec` checkout.
 
 ## License
 
-BSD-3-Clause. See `LICENSE`.
+BSD-3-Clause. See [LICENSE](./LICENSE).

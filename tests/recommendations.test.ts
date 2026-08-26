@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { collectRecommendations, validateAnalysis } from "../src/index.js";
+import { resolveAnalysisTree } from "../src/node.js";
 
 const analysis = (outputs: unknown[], extra: Record<string, unknown> = {}) => ({
   version: "1.0",
@@ -68,7 +69,7 @@ describe("collectRecommendations", () => {
       const data = analysis([], { analyses: { child: { path: "sub" } } });
 
       expect(collectRecommendations(data)).toEqual([]);
-      const messages = collectRecommendations(data, { basePath: root });
+      const messages = collectRecommendations(resolveAnalysisTree(data, root));
       expect(messages).toHaveLength(1);
       expect(messages[0]).toContain("child.result");
     } finally {

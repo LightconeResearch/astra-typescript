@@ -6,7 +6,7 @@
 // error-only channel: a caller treats a non-empty result as invalid, and a
 // recommendation must never make an analysis invalid.
 
-import { type Dict, asArray, asDict, resolveAnalysisTree } from "../helpers.js";
+import { type Dict, asArray, asDict } from "../helpers.js";
 import type { Analysis } from "../types.js";
 
 /** The release that turns the recommendations below into requirements. */
@@ -44,13 +44,9 @@ function walk(node: Dict, scope: readonly string[], missing: string[]): void {
  */
 export function collectRecommendations(
   data: Analysis | Dict,
-  options: { basePath?: string } = {},
 ): string[] {
-  const working = options.basePath
-    ? resolveAnalysisTree(data as Dict, options.basePath)
-    : (data as Dict);
   const missingFormat: string[] = [];
-  walk(working, [], missingFormat);
+  walk(data as Dict, [], missingFormat);
 
   if (!missingFormat.length) return [];
   const subject = missingFormat.length === 1 ? "output" : "outputs";

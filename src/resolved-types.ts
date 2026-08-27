@@ -21,10 +21,16 @@ export interface UniverseSelection {
   source: "explicit" | "implicit" | "none";
 }
 
+/** Fields guaranteed by full-project validation on the resolved root. */
+export type ResolvedRootAnalysis = ResolvedAnalysisNode & {
+  version: string;
+  name: string;
+};
+
 export interface ResolvedAnalysisDocument {
   schemaVersion: typeof RESOLVED_ANALYSIS_SCHEMA_VERSION;
   universe: UniverseSelection;
-  analysis: ResolvedAnalysisNode;
+  analysis: ResolvedRootAnalysis;
 }
 
 export interface ResolvedRecordFields {

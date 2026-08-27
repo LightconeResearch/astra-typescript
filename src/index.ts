@@ -18,38 +18,8 @@ export type {
 } from "./types.js";
 
 export {
-  parseYamlString,
-  isConditionMet,
-  collectNodeDecisions,
-  injectAnalysisIdsInPlace,
-  injectUniverseIdsInPlace,
-  getInputIds,
-  getOutputIds,
-} from "./helpers.js";
-
-export {
-  validateAnalysisData,
-  validateUniverseData,
-  validateAnalysisStructure,
-  validateUniverseStructure,
-  type SchemaValidationIssue,
-  SemanticError,
-  validateAnalysis,
-  validateUniverse,
-  RECOMMENDED_UNTIL,
-  collectRecommendations,
-} from "./validation/index.js";
-
-export {
-  type JsonSchema,
-  type SchemaLoadOptions,
-  ASTRA_SPEC_HOST,
-  ASTRA_SPEC_VERSION,
-  astraSchemaUrl,
-  loadAstraSchema,
-  setAstraSchema,
-  clearAstraSchemaCache,
-} from "./schema/index.js";
+  BUNDLED_ASTRA_SPEC_VERSION as ASTRA_SPEC_VERSION,
+} from "./schema/bundled.js";
 
 export type {
   ProjectReader,

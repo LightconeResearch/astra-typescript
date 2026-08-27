@@ -1,7 +1,7 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.0.8",
-  "description": "TypeScript SDK for ASTRA (Agentic Schema for Transparent Research Analysis): parse, validate, and inspect ASTRA analysis specifications.",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for validating ASTRA projects and opening them as resolved data.",
   "type": "module",
   "license": "BSD-3-Clause",
   "publishConfig": {
@@ -14,21 +14,17 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./schema": {
-      "types": "./dist/schema/index.d.ts",
-      "import": "./dist/schema/index.js"
-    },
     "./node": {
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
     }
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run clean && npm run build",
     "schema:sync": "node scripts/sync-bundled-schema.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -36,7 +32,7 @@
     "clean": "rm -rf dist"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "keywords": [
     "astra",

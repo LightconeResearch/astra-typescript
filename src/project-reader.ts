@@ -1,7 +1,18 @@
-/** The minimal read-only storage contract required by `resolveAnalysis`. */
+/**
+ * Read-only access to one ASTRA project root.
+ *
+ * Paths are normalized POSIX paths relative to that root; `""` denotes the
+ * root itself. Methods reject backend failures and wrong entry kinds. Only
+ * `stat()` represents a missing path as `undefined`. Implementations must keep
+ * reads inside their root and throw `ProjectPathError` when a backend feature
+ * such as a symbolic link would escape it.
+ */
 export interface ProjectReader {
+  /** Read one existing UTF-8 file. */
   readText(path: string): Promise<string>;
+  /** Inspect a path, returning `undefined` only when it does not exist. */
   stat(path: string): Promise<ProjectEntry | undefined>;
+  /** List the immediate, bare-name children of one existing directory. */
   readDirectory(path: string): Promise<ProjectDirectoryEntry[]>;
 }
 
@@ -21,7 +32,10 @@ export interface ProjectDirectoryEntry {
   type: "file" | "directory";
 }
 
-/** Adapter signal for backend-specific root escapes such as symlinks. */
+/**
+ * Adapter signal for a backend-specific root escape such as a symbolic link.
+ * The SDK translates this to `ProjectLoadError` with `PROJECT_PATH_ESCAPE`.
+ */
 export class ProjectPathError extends Error {
   constructor(message: string) {
     super(message);
@@ -75,7 +89,8 @@ export function projectDirname(path: string): string {
 
 export function isValidProjectEntry(entry: ProjectEntry): boolean {
   if (entry.type === "directory") return true;
-  return Number.isSafeInteger(entry.size)
+  return entry.type === "file"
+    && Number.isSafeInteger(entry.size)
     && entry.size >= 0
     && Number.isSafeInteger(entry.modifiedAtMs)
     && entry.modifiedAtMs >= 0;

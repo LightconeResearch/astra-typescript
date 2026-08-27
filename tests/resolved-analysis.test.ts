@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   indexAnalysis,
+  walkAnalyses,
   resolveAnalysis,
   ProjectLoadError,
   type ProjectReader,
@@ -492,6 +493,29 @@ analyses:
     const index = indexAnalysis(bundle.document);
     expect(index.analysisByPath.get("$")).toBe(bundle.document.analysis);
     expect(index.recordByPath.get("outputs.headline")).toBe(bundle.document.analysis.outputs[0]);
+    expect(index.analysisByRecordPath.get("outputs.headline")).toBe(bundle.document.analysis);
+  });
+
+  it("maps every record back to the analysis that declares it", async () => {
+    await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
+    const bundle = await resolveAnalysis(createNodeProjectReader(root));
+    const index = indexAnalysis(bundle.document);
+    let records = 0;
+    for (const analysis of walkAnalyses(bundle.document)) {
+      for (const record of [
+        ...analysis.inputs,
+        ...analysis.outputs,
+        ...analysis.decisions,
+        ...analysis.prior_insights,
+        ...analysis.findings,
+      ]) {
+        records += 1;
+        expect(index.analysisByRecordPath.get(record.canonicalPath)).toBe(analysis);
+      }
+    }
+    expect(records).toBe(index.recordByPath.size);
+    expect(index.analysisByRecordPath.size).toBe(index.recordByPath.size);
+    expect(index.analysisByRecordPath.get("stage.outputs.plot")).toBe(index.analysisByPath.get("stage"));
   });
 
   it("does not list result directories", async () => {

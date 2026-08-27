@@ -119,6 +119,7 @@ import { indexAnalysis } from "@astra-spec/sdk";
 
 const index = indexAnalysis(bundle.document);
 const output = index.recordByPath.get("stage.outputs.figure");
+const owner = index.analysisByRecordPath.get("stage.outputs.figure"); // the "stage" node
 ```
 
 Normalized cited DOI lists are also derived rather than duplicated:
@@ -232,8 +233,8 @@ The Node adapter is a separate entry point:
 
 | Export | Kind | Purpose |
 | --- | --- | --- |
-| `AnalysisIndex` | interface | Optional canonical-path lookup maps. |
-| `indexAnalysis` | function | Derive analysis and record lookup maps from a resolved document. |
+| `AnalysisIndex` | interface | Optional canonical-path lookup maps: analyses, records, and each record's declaring analysis. |
+| `indexAnalysis` | function | Derive analysis, record, and record-owner lookup maps from a resolved document. |
 | `walkAnalyses` | function | Iterate resolved analysis nodes depth-first in document order. |
 | `normalizeDoi` | function | Normalize common DOI spellings without validating them. |
 | `collectCitedDois` | function | Collect unique normalized DOIs in resolved document order. |

@@ -7,12 +7,15 @@ import type {
 export interface AnalysisIndex {
   analysisByPath: ReadonlyMap<string, ResolvedAnalysisNode>;
   recordByPath: ReadonlyMap<string, ResolvedRecord>;
+  /** The analysis node that declares each record, keyed by the record's canonical path. */
+  analysisByRecordPath: ReadonlyMap<string, ResolvedAnalysisNode>;
 }
 
 /** Build optional lookup maps from the recursive resolved document. */
 export function indexAnalysis(document: ResolvedAnalysisDocument): AnalysisIndex {
   const analysisByPath = new Map<string, ResolvedAnalysisNode>();
   const recordByPath = new Map<string, ResolvedRecord>();
+  const analysisByRecordPath = new Map<string, ResolvedAnalysisNode>();
 
   const visit = (analysis: ResolvedAnalysisNode): void => {
     analysisByPath.set(analysis.canonicalPath, analysis);
@@ -24,12 +27,13 @@ export function indexAnalysis(document: ResolvedAnalysisDocument): AnalysisIndex
       ...analysis.findings,
     ]) {
       recordByPath.set(record.canonicalPath, record);
+      analysisByRecordPath.set(record.canonicalPath, analysis);
     }
     for (const child of analysis.analyses) visit(child);
   };
 
   visit(document.analysis);
-  return { analysisByPath, recordByPath };
+  return { analysisByPath, recordByPath, analysisByRecordPath };
 }
 
 /** Depth-first traversal in the ordering defined by the resolved contract. */

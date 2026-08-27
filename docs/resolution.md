@@ -111,6 +111,7 @@ import { collectCitedDois, indexAnalysis, walkAnalyses } from "@astra-spec/sdk";
 
 const index = indexAnalysis(bundle.document);
 const figure = index.recordByPath.get("stage.outputs.figure");
+const owner = index.analysisByRecordPath.get("stage.outputs.figure"); // the "stage" node
 
 for (const analysis of walkAnalyses(bundle.document)) {
   console.log(analysis.canonicalPath);

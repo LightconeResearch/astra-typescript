@@ -1,6 +1,6 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript SDK for validating ASTRA projects and opening them as resolved data.",
   "type": "module",
   "license": "BSD-3-Clause",

@@ -210,6 +210,38 @@ prior_insights:
     });
   });
 
+  it.each([".inf", "-.inf", ".nan", "1e999"])(
+    "rejects the non-finite YAML number %s",
+    async (number) => {
+      await writeAnalysis(`version: "0.0.14"
+name: Non-finite YAML number
+inputs: []
+outputs:
+  - id: result
+    type: data
+    format: json
+    recipe:
+      command: run
+      resources:
+        cpus: ${number}
+`);
+
+      const validation = await validateAnalysis(reader());
+      expect(validation).toMatchObject({
+        valid: false,
+        issues: [expect.objectContaining({
+          code: "INVALID_YAML",
+          file: "astra.yaml",
+          message: expect.stringContaining("JSON-compatible"),
+        })],
+      });
+      await expect(resolveAnalysis(reader())).rejects.toMatchObject({
+        name: "AnalysisValidationError",
+        issues: validation.issues,
+      });
+    },
+  );
+
   it("treats null object fields as absent before structural validation", async () => {
     await writeAnalysis(`version: "0.0.14"
 name: Nullable required values

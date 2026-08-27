@@ -203,11 +203,12 @@ function hasObjectCycle(value: unknown, ancestors = new Set<object>()): boolean 
   return false;
 }
 
-function hasNonJsonObject(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasNonJsonObject);
+function hasNonJsonValue(value: unknown): boolean {
+  if (typeof value === "number") return !Number.isFinite(value);
+  if (Array.isArray(value)) return value.some(hasNonJsonValue);
   if (value === null || typeof value !== "object") return false;
   const mapping = asDict(value);
-  return !mapping || Object.values(mapping).some(hasNonJsonObject);
+  return !mapping || Object.values(mapping).some(hasNonJsonValue);
 }
 
 /** LinkML serializations use null object fields to mean "not supplied". */
@@ -367,8 +368,8 @@ async function readMapping(
     const mapping = asDict(parsed);
     if (!mapping) throw new Error("YAML root must be a mapping/object");
     if (hasObjectCycle(mapping)) throw new Error("YAML must not contain recursive aliases");
-    if (hasNonJsonObject(mapping)) {
-      throw new Error("YAML must contain only JSON-compatible mappings and sequences");
+    if (hasNonJsonValue(mapping)) {
+      throw new Error("YAML must contain only JSON-compatible values");
     }
     omitNullObjectFields(mapping);
     return { data: mapping, valid: true };

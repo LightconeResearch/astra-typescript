@@ -83,8 +83,6 @@ project-relative artifact files and opaque cache tokens. A missing output
 artifact is not a project error: the output simply has no artifact descriptor
 or binding.
 
-### Deterministic artifact paths
-
 Output locations are derived without scanning `results/`. A root output lives
 at `results/<universe>/<output>.<format>`; an inline nested output lives at
 `results/<universe>/<analysis>.<output>.<format>` (with additional analysis IDs

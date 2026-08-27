@@ -1,0 +1,42 @@
+[project]
+site_name = "ASTRA TypeScript SDK"
+site_url = "https://lightconeresearch.github.io/astra-typescript/"
+site_description = "Validate ASTRA projects and open them as resolved TypeScript data"
+site_author = "Lightcone Research"
+repo_url = "https://github.com/LightconeResearch/astra-typescript"
+repo_name = "LightconeResearch/astra-typescript"
+edit_uri = "edit/main/docs/"
+copyright = "&copy; 2026 Lightcone Research"
+docs_dir = "docs"
+
+nav = [
+  {"Home" = "index.md"},
+  {"Validate" = "validation.md"},
+  {"Resolve" = "resolution.md"},
+  {"Project readers" = "project-readers.md"},
+  {"API reference" = "api.md"},
+  {"ASTRA specification" = "https://astra-spec.org/latest/"},
+]
+
+[project.extra.version]
+provider = "mike"
+
+[project.theme]
+variant = "modern"
+features = [
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.top",
+  "search.highlight",
+  "content.code.copy",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"

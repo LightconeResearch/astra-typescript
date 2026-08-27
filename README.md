@@ -11,6 +11,8 @@ The SDK has two project workflows:
   serializable data structure for viewers and integrations.
 
 The canonical specification lives at <https://astra-spec.org/>.
+SDK documentation lives at
+<https://lightconeresearch.github.io/astra-typescript/>.
 
 ## Install
 

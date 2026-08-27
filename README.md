@@ -94,16 +94,19 @@ import {
   loadYaml,
   validateAnalysisFile,
   validateUniverseFile,
-  semanticValidateAnalysisFile,
 } from "@astra-spec/sdk/node";
 ```
 
-Structural validation uses the published JSON Schema. `loadAstraSchema()` uses
-`fetch` and an in-memory cache; callers can also install a preloaded schema with
-`setAstraSchema()`. Persistent caching belongs to the host.
+Structural validation uses the canonical astra-spec schema bundled with this
+SDK, so `resolveAnalysis()` and the validation APIs work offline and do not
+follow the moving `latest` schema. `ASTRA_SPEC_VERSION` identifies that bundled
+release. The bundled object is immutable. `loadAstraSchema({ version })` and
+`loadAstraSchema({ url })` remain available for explicit remote schemas, and
+callers can inject a preloaded
+schema into `resolveAnalysis(reader, { schema })` or `setAstraSchema()`.
 
 `collectRecommendations()` reports advisory fields such as an omitted output
-format. For multi-file workflows, preload path-backed children first or use
+format. For a multi-file project, pass `bundle.document.analysis` from
 `resolveAnalysis()`, which owns recursive loading.
 
 ## Optional indexes
@@ -117,6 +120,15 @@ const index = indexAnalysis(bundle.document);
 const output = index.recordByPath.get("stage.outputs.figure");
 ```
 
+Normalized cited DOI lists are also derived rather than duplicated in the
+resolved bundle:
+
+```ts
+import { collectCitedDois } from "@astra-spec/sdk";
+
+const citedDois = collectCitedDois(bundle.document);
+```
+
 ## Development
 
 ```bash
@@ -126,7 +138,8 @@ npm run typecheck
 npm run build
 ```
 
-The tests use the canonical schema from a sibling `../astra-spec` checkout.
+The test suite exercises the bundled canonical schema and does not require a
+sibling `astra-spec` checkout or network access.
 
 ## License
 

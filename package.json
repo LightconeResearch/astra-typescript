@@ -1,6 +1,6 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "TypeScript SDK for ASTRA (Agentic Schema for Transparent Research Analysis): parse, validate, and inspect ASTRA analysis specifications.",
   "type": "module",
   "license": "BSD-3-Clause",
@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "schema:sync": "node scripts/sync-bundled-schema.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

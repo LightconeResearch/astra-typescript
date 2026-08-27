@@ -5,22 +5,22 @@ import {
   validateUniverse,
   SemanticError,
 } from "../src/validation/semantic.js";
-import { loadYaml, semanticValidateAnalysisFile } from "../src/node.js";
+import { loadYaml } from "../src/node.js";
 import { FIXTURES } from "./setup.js";
 
 const codes = (errs: SemanticError[]): string[] => errs.map((e) => e.code);
 
 describe("semantic validation: valid fixtures pass cleanly", () => {
   it("Analysis-001 has no semantic errors", () => {
-    expect(semanticValidateAnalysisFile(FIXTURES.validAnalysis)).toEqual([]);
+    expect(validateAnalysis(loadYaml(FIXTURES.validAnalysis))).toEqual([]);
   });
 
   it("iris example has no semantic errors", () => {
-    expect(semanticValidateAnalysisFile(FIXTURES.irisAnalysis)).toEqual([]);
+    expect(validateAnalysis(loadYaml(FIXTURES.irisAnalysis))).toEqual([]);
   });
 
   it("iris_pipeline example has no semantic errors", () => {
-    expect(semanticValidateAnalysisFile(FIXTURES.irisPipelineAnalysis)).toEqual([]);
+    expect(validateAnalysis(loadYaml(FIXTURES.irisPipelineAnalysis))).toEqual([]);
   });
 });
 

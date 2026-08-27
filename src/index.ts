@@ -44,6 +44,7 @@ export {
   type JsonSchema,
   type SchemaLoadOptions,
   ASTRA_SPEC_HOST,
+  ASTRA_SPEC_VERSION,
   astraSchemaUrl,
   loadAstraSchema,
   setAstraSchema,
@@ -55,8 +56,14 @@ export type {
   ProjectEntry,
   ProjectDirectoryEntry,
 } from "./project-reader.js";
-export { ProjectPathError } from "./project-reader.js";
+export {
+  ProjectPathError,
+  assertProjectPath,
+  joinProjectPath,
+  projectDirname,
+} from "./project-reader.js";
 
 export * from "./resolved-types.js";
 export * from "./resolve.js";
 export * from "./index-analysis.js";
+export * from "./citations.js";

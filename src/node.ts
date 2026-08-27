@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import { asDict, parseYamlString, type Dict } from "./helpers.js";
+import { parseYamlString, type Dict } from "./helpers.js";
 import {
   assertProjectPath,
   ProjectPathError,
@@ -11,17 +11,11 @@ import {
   type ProjectReader,
 } from "./project-reader.js";
 import type { JsonSchema } from "./schema/index.js";
-import type { Analysis } from "./types.js";
 import {
   validateAnalysisData,
   validateUniverseData,
   type ValidateOptions,
 } from "./validation/schema.js";
-import {
-  validateAnalysis,
-  validateUniverse,
-  type SemanticError,
-} from "./validation/semantic.js";
 
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
@@ -104,30 +98,6 @@ export function loadYaml(filePath: string): Dict {
   return parseYamlString(readFileSync(filePath, "utf8"));
 }
 
-/** Synchronously preload path-backed children for standalone validation. */
-export function resolveAnalysisTree(data: Dict, basePath: string): Dict {
-  const analyses = asDict(data.analyses);
-  if (!analyses) return data;
-  const resolvedAnalyses: Dict = {};
-  for (const [id, raw] of Object.entries(analyses)) {
-    const child = asDict(raw);
-    if (!child) {
-      resolvedAnalyses[id] = raw;
-      continue;
-    }
-    if (typeof child.path === "string" && child.path) {
-      const childDirectory = resolve(basePath, child.path);
-      resolvedAnalyses[id] = resolveAnalysisTree(
-        loadYaml(resolve(childDirectory, "astra.yaml")),
-        childDirectory,
-      );
-    } else {
-      resolvedAnalyses[id] = resolveAnalysisTree(child, basePath);
-    }
-  }
-  return { ...data, analyses: resolvedAnalyses };
-}
-
 export async function validateAnalysisFile(
   filePath: string,
   options: ValidateOptions = {},
@@ -154,18 +124,6 @@ export async function isValidUniverse(
   options: ValidateOptions = {},
 ): Promise<boolean> {
   return (await validateUniverseFile(filePath, options)).length === 0;
-}
-
-export function semanticValidateAnalysisFile(filePath: string): SemanticError[] {
-  const data = resolveAnalysisTree(loadYaml(filePath), dirname(filePath));
-  return validateAnalysis(data as Analysis);
-}
-
-export function semanticValidateUniverseFile(
-  universePath: string,
-  analysisPath: string,
-): SemanticError[] {
-  return validateUniverse(loadYaml(universePath), loadYaml(analysisPath));
 }
 
 export type { JsonSchema, ValidateOptions };

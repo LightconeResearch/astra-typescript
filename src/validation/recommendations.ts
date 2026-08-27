@@ -7,6 +7,7 @@
 // recommendation must never make an analysis invalid.
 
 import { type Dict, asArray, asDict } from "../helpers.js";
+import type { ResolvedAnalysisNode } from "../resolved-types.js";
 import type { Analysis } from "../types.js";
 
 /** The release that turns the recommendations below into requirements. */
@@ -24,10 +25,19 @@ function walk(node: Dict, scope: readonly string[], missing: string[]): void {
     if (!localId) continue;
     missing.push([...scope, localId].join("."));
   }
-  const analyses = asDict(node.analyses) ?? {};
-  for (const [subId, raw] of Object.entries(analyses)) {
-    const sub = asDict(raw);
-    if (sub) walk(sub, [...scope, subId], missing);
+  if (Array.isArray(node.analyses)) {
+    for (const raw of node.analyses) {
+      const sub = asDict(raw);
+      if (sub && typeof sub.id === "string") {
+        walk(sub, [...scope, sub.id], missing);
+      }
+    }
+  } else {
+    const analyses = asDict(node.analyses) ?? {};
+    for (const [subId, raw] of Object.entries(analyses)) {
+      const sub = asDict(raw);
+      if (sub) walk(sub, [...scope, subId], missing);
+    }
   }
 }
 
@@ -37,13 +47,12 @@ function walk(node: Dict, scope: readonly string[], missing: string[]): void {
  * Returns human-readable messages, empty when there is nothing to say. These
  * are advisory: they never make an analysis invalid.
  *
- * Pass `basePath` for a multi-file project: a sub-analysis declared with
- * `path:` is a stub until the tree is resolved, and its outputs would
- * otherwise be skipped in silence — reported as a clean bill of health for a
- * project that in fact has none.
+ * For a full multi-file project, pass `bundle.document.analysis` from
+ * `resolveAnalysis()`. An authored path-backed child is only a reference and
+ * does not contain the child file's outputs.
  */
 export function collectRecommendations(
-  data: Analysis | Dict,
+  data: Analysis | ResolvedAnalysisNode | Dict,
 ): string[] {
   const missingFormat: string[] = [];
   walk(data as Dict, [], missingFormat);

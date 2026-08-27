@@ -1,6 +1,5 @@
-// Structural (JSON Schema) validation. The schema itself is fetched on
-// demand from astra-spec.org via `loadAstraSchema` and cached in memory;
-// consumers can also pass a pre-loaded schema directly.
+// Structural (JSON Schema) validation. The SDK's supported schema is bundled;
+// consumers can explicitly load a remote schema or pass one directly.
 
 import Ajv2019 from "ajv/dist/2019.js";
 import type { ErrorObject, ValidateFunction } from "ajv";
@@ -113,9 +112,8 @@ export async function validateUniverseStructure(
   return universe(prepared) ? [] : structuredErrors(universe);
 }
 
-/** Validate an Analysis dict against the JSON Schema. Returns error
- *  strings (empty when valid). The schema is fetched from astra-spec.org
- *  on first use unless `opts.schema` is provided. */
+/** Validate an Analysis dict against the JSON Schema. Returns error strings
+ *  (empty when valid). The bundled schema is used unless overridden. */
 export async function validateAnalysisData(
   data: Record<string, unknown>,
   opts: ValidateOptions = {},

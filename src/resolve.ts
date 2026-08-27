@@ -43,10 +43,13 @@ import {
   validateAnalysisStructure,
   validateUniverseStructure,
 } from "./validation/schema.js";
+import type { JsonSchema } from "./schema/index.js";
 
 export interface ResolveOptions {
   /** Select this root universe instead of the first filename. */
   universeId?: string;
+  /** Override the SDK's bundled structural schema. */
+  schema?: JsonSchema;
 }
 
 export interface ValidationIssue {
@@ -575,15 +578,22 @@ function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]):
 async function validateLoadedStructures(
   root: LoadedAnalysis,
   issues: ValidationIssue[],
+  schema?: JsonSchema,
 ): Promise<void> {
   for (const context of walkLoaded(root)) {
     if (context === context.physicalRoot) {
-      for (const issue of await validateAnalysisStructure(context.data as unknown as Dict)) {
+      for (const issue of await validateAnalysisStructure(
+        context.data as unknown as Dict,
+        schema ? { schema } : {},
+      )) {
         pushIssue(issues, { ...issue, file: context.file });
       }
     }
     for (const universe of context.universes) {
-      for (const issue of await validateUniverseStructure(universe.data as unknown as Dict)) {
+      for (const issue of await validateUniverseStructure(
+        universe.data as unknown as Dict,
+        schema ? { schema } : {},
+      )) {
         pushIssue(issues, { ...issue, file: universe.file });
       }
     }
@@ -1570,7 +1580,7 @@ export async function resolveAnalysis(
     ancestry: new Set<string>(),
   });
   validateMapAgreements(root, issues);
-  await validateLoadedStructures(root, issues);
+  await validateLoadedStructures(root, issues, options.schema);
   try {
     validateLoadedSemantics(root, issues);
   } catch (error) {

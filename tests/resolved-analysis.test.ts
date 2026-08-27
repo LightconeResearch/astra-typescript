@@ -2,19 +2,17 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   AnalysisValidationError,
   indexAnalysis,
   resolveAnalysis,
   ResolveAnalysisError,
-  setAstraSchema,
   type ProjectReader,
   type ResolvedOutput,
 } from "../src/index.js";
 import { createNodeProjectReader } from "../src/node.js";
-import { getTestSchema } from "./setup.js";
 
 const BASIC_ANALYSIS = `
 version: "0.0.14"
@@ -93,10 +91,6 @@ analyses:
 
 let root: string;
 
-beforeAll(async () => {
-  setAstraSchema(await getTestSchema());
-});
-
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "astra-resolved-"));
 });
@@ -115,6 +109,22 @@ function outputAt(outputs: ResolvedOutput[], id: string): ResolvedOutput {
 }
 
 describe("resolveAnalysis", () => {
+  it("accepts an explicitly injected structural schema", async () => {
+    await writeFile(join(root, "astra.yaml"), BASIC_ANALYSIS);
+    const rejectingSchema = {
+      $schema: "https://json-schema.org/draft/2019-09/schema",
+      $defs: { Universe: { type: "object" } },
+      not: {},
+    };
+
+    await expect(resolveAnalysis(createNodeProjectReader(root), {
+      schema: rejectingSchema,
+    })).rejects.toMatchObject({
+      name: "AnalysisValidationError",
+      issues: [expect.objectContaining({ code: "SCHEMA_NOT" })],
+    });
+  });
+
   it("returns the recursive, serializable resolved document", async () => {
     await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
     await writeUniverse(

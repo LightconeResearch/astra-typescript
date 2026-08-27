@@ -1,18 +1,26 @@
-# astra-typescript
+# ASTRA TypeScript SDK - Agentic Schema for Transparent Research Analysis
 
-TypeScript SDK for the **Agentic Schema for Transparent Research Analysis
-(ASTRA)**, published as `@astra-spec/sdk`.
+[![CI](https://github.com/LightconeResearch/astra-typescript/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LightconeResearch/astra-typescript/actions/workflows/ci.yml)
+[![Documentation](https://github.com/LightconeResearch/astra-typescript/actions/workflows/docs-check.yml/badge.svg?branch=main)](https://github.com/LightconeResearch/astra-typescript/actions/workflows/docs-check.yml)
+[![npm](https://img.shields.io/npm/v/%40astra-spec%2Fsdk.svg)](https://www.npmjs.com/package/@astra-spec/sdk)
+[![Node.js >=20](https://img.shields.io/badge/Node.js-%3E%3D20-339933.svg?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-green.svg)](https://opensource.org/licenses/BSD-3-Clause)
 
-The SDK has two project workflows:
+TypeScript SDK for validating and resolving ASTRA projects, published as
+`@astra-spec/sdk`.
+
+> For the schema, concepts, and authoring model, see the
+> [canonical ASTRA specification](https://astra-spec.org/latest/).
+
+The SDK deliberately exposes two top-level project workflows:
 
 - `validateAnalysis()` answers whether an authored ASTRA project is valid and
   returns structured issues.
 - `resolveAnalysis()` validates the project and opens it as one recursive,
   serializable data structure for viewers and integrations.
 
-The canonical specification lives at <https://astra-spec.org/>.
-SDK documentation lives at
-<https://lightconeresearch.github.io/astra-typescript/>.
+See the [versioned SDK documentation](https://lightconeresearch.github.io/astra-typescript/)
+for focused integration guides and the complete API reference.
 
 ## Install
 
@@ -254,6 +262,13 @@ they do not parse data or prove that it is valid. Use `validateAnalysis` or
 | `FragmentSelector` | interface | Fragment or page locator for evidence. |
 | `Recipe` | interface | Authored command, resources, and container for an output. |
 | `Resources` | interface | Authored compute resource requirements. |
+
+## Links
+
+- [SDK documentation](https://lightconeresearch.github.io/astra-typescript/)
+- [ASTRA specification](https://astra-spec.org/latest/)
+- [`@astra-spec/sdk` on npm](https://www.npmjs.com/package/@astra-spec/sdk)
+- [Releases](https://github.com/LightconeResearch/astra-typescript/releases)
 
 ## License
 

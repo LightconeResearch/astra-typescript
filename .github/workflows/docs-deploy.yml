@@ -1,0 +1,66 @@
+name: Deploy Docs
+
+# Publish immutable release snapshots to gh-pages. GitHub Pages must be set to
+# "Deploy from a branch" with gh-pages / (root) as its source.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Docs version to (re)deploy, e.g. 0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Manual runs remain available; published pre-releases do not replace the
+    # stable documentation.
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check out requested version
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: git checkout --detach "v${INPUT_VERSION#v}"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install documentation dependencies
+        run: pip install --requirement requirements-docs.txt
+      - name: Validate documentation
+        run: zensical build --clean --strict
+      - name: Resolve documentation version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${INPUT_VERSION#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Deploying documentation version $version"
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Deploy versioned documentation
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            mike deploy --push --update-aliases "${{ steps.version.outputs.version }}" latest
+            mike set-default --push latest
+          else
+            mike deploy --push "${{ steps.version.outputs.version }}"
+          fi

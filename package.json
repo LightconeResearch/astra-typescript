@@ -43,7 +43,7 @@
     "linkml",
     "scientific-computing"
   ],
-  "homepage": "https://astra-spec.org/",
+  "homepage": "https://lightconeresearch.github.io/astra-typescript/",
   "repository": {
     "type": "git",
     "url": "https://github.com/LightconeResearch/astra-typescript"

@@ -78,39 +78,64 @@ time in milliseconds. The exported `ProjectReader`, `ProjectEntry`, and
 
 ## Validation and parsing
 
-The root entry point is browser-safe and contains no `node:*` imports:
+Parsing and validation are separate. `parseYamlString()` is browser-safe;
+`loadYaml()` reads a file in Node. Both return plain data and throw when the
+YAML cannot be parsed, but neither checks that the data is a valid ASTRA
+document.
+
+### Validate an analysis file
+
+For a standalone `astra.yaml`, first check its structure against the bundled
+schema, then run the semantic checks:
 
 ```ts
 import {
-  parseYamlString,
   validateAnalysisData,
-  validateUniverseData,
   validateAnalysis,
-  validateUniverse,
 } from "@astra-spec/sdk";
+import { loadYaml } from "@astra-spec/sdk/node";
+
+const analysis = loadYaml("astra.yaml");
+const errors = await validateAnalysisData(analysis);
+
+// Semantic validation expects structurally valid data.
+if (errors.length === 0) {
+  errors.push(...validateAnalysis(analysis).map((error) => error.toString()));
+}
+
+if (errors.length > 0) {
+  throw new Error(`Invalid astra.yaml:\n${errors.join("\n")}`);
+}
 ```
 
-Filesystem-oriented helpers live under the Node entry point:
+`validateAnalysisData()` checks schema structure; `validateAnalysis()` checks
+references, dependencies, decision constraints, and other semantic rules. If
+only the structural check is needed, the Node shortcut is:
 
 ```ts
-import {
-  loadYaml,
-  validateAnalysisFile,
-  validateUniverseFile,
-} from "@astra-spec/sdk/node";
+import { validateAnalysisFile } from "@astra-spec/sdk/node";
+
+const schemaErrors = await validateAnalysisFile("astra.yaml");
 ```
 
-Structural validation uses the canonical astra-spec schema bundled with this
-SDK, so `resolveAnalysis()` and the validation APIs work offline and do not
-follow the moving `latest` schema. `ASTRA_SPEC_VERSION` identifies that bundled
-release. The bundled object is immutable. `loadAstraSchema({ version })` and
-`loadAstraSchema({ url })` remain available for explicit remote schemas, and
-callers can inject a preloaded
-schema into `resolveAnalysis(reader, { schema })` or `setAstraSchema()`.
+For universes, use `validateUniverseData()` or `validateUniverseFile()` for
+structure and `validateUniverse(universe, analysis)` for semantics. The root
+entry point remains browser-safe and contains no `node:*` imports.
+
+These functions validate one authored document. For a complete project with
+path-backed analyses and universe files, use `resolveAnalysis()`: it owns
+recursive loading and rejects the complete issue set as an
+`AnalysisValidationError`.
+
+Structural validation uses the exact canonical astra-spec schema bundled with
+the SDK, so it works offline and never follows the moving `latest` schema.
+`ASTRA_SPEC_VERSION` identifies the bundled release. Explicit schema overrides
+remain available through `loadAstraSchema({ version })`,
+`loadAstraSchema({ url })`, `setAstraSchema()`, or the
+`resolveAnalysis(reader, { schema })` option.
 
 `collectRecommendations()` reports advisory fields such as an omitted output
-format. For a multi-file project, pass `bundle.document.analysis` from
-`resolveAnalysis()`, which owns recursive loading.
+`resolveAnalysis()`.
 
 ## License
 

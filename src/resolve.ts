@@ -893,21 +893,20 @@ class ProjectResolver {
       return undefined;
     }
     let target: Input | Output | undefined;
-    let targetContext = owner;
+    let targetContext: LoadedAnalysis | undefined = owner;
     if (parsed.rest.length === 1) {
       target = findById(localInputs(owner), parsed.rest[0]!);
     } else {
-      targetContext = this.descend(owner, parsed.rest.slice(0, -1)) ?? owner;
-      target = targetContext === owner && parsed.rest.length > 1
-        && !owner.childById.has(parsed.rest[0]!)
-        ? undefined
-        : findById(localOutputs(targetContext), parsed.rest.at(-1)!);
+      targetContext = this.descend(owner, parsed.rest.slice(0, -1));
+      target = targetContext
+        ? findById(localOutputs(targetContext), parsed.rest.at(-1)!)
+        : undefined;
     }
     if (target && targetContext === context && !localInputs(context).includes(target as Input)) {
       this.error(context, "INVALID_FROM", `Input alias '${input.from}' cannot reference its own analysis output`);
       return undefined;
     }
-    if (!target) {
+    if (!target || !targetContext) {
       this.error(context, "INVALID_FROM", `Input alias target '${input.from}' does not exist`);
       return undefined;
     }

@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import { parseYamlString, type Dict } from "./helpers.js";
 import {
   assertProjectPath,
   ProjectPathError,
@@ -10,12 +8,6 @@ import {
   type ProjectEntry,
   type ProjectReader,
 } from "./project-reader.js";
-import type { JsonSchema } from "./schema/index.js";
-import {
-  validateAnalysisData,
-  validateUniverseData,
-  type ValidateOptions,
-} from "./validation/schema.js";
 
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
@@ -93,37 +85,3 @@ export function createNodeProjectReader(projectRoot: string): ProjectReader {
     },
   };
 }
-
-export function loadYaml(filePath: string): Dict {
-  return parseYamlString(readFileSync(filePath, "utf8"));
-}
-
-export async function validateAnalysisFile(
-  filePath: string,
-  options: ValidateOptions = {},
-): Promise<string[]> {
-  return validateAnalysisData(loadYaml(filePath), options);
-}
-
-export async function validateUniverseFile(
-  filePath: string,
-  options: ValidateOptions = {},
-): Promise<string[]> {
-  return validateUniverseData(loadYaml(filePath), options);
-}
-
-export async function isValidAnalysis(
-  filePath: string,
-  options: ValidateOptions = {},
-): Promise<boolean> {
-  return (await validateAnalysisFile(filePath, options)).length === 0;
-}
-
-export async function isValidUniverse(
-  filePath: string,
-  options: ValidateOptions = {},
-): Promise<boolean> {
-  return (await validateUniverseFile(filePath, options)).length === 0;
-}
-
-export type { JsonSchema, ValidateOptions };

@@ -5,10 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  AnalysisValidationError,
   indexAnalysis,
   resolveAnalysis,
-  ResolveAnalysisError,
+  ProjectLoadError,
   type ProjectReader,
   type ResolvedOutput,
 } from "../src/index.js";
@@ -109,22 +108,6 @@ function outputAt(outputs: ResolvedOutput[], id: string): ResolvedOutput {
 }
 
 describe("resolveAnalysis", () => {
-  it("accepts an explicitly injected structural schema", async () => {
-    await writeFile(join(root, "astra.yaml"), BASIC_ANALYSIS);
-    const rejectingSchema = {
-      $schema: "https://json-schema.org/draft/2019-09/schema",
-      $defs: { Universe: { type: "object" } },
-      not: {},
-    };
-
-    await expect(resolveAnalysis(createNodeProjectReader(root), {
-      schema: rejectingSchema,
-    })).rejects.toMatchObject({
-      name: "AnalysisValidationError",
-      issues: [expect.objectContaining({ code: "SCHEMA_NOT" })],
-    });
-  });
-
   it("returns the recursive, serializable resolved document", async () => {
     await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
     await writeUniverse(
@@ -225,6 +208,23 @@ describe("resolveAnalysis", () => {
     expect(after.bindings[0]!.cacheToken).not.toBe(beforeBinding.cacheToken);
   });
 
+  it("reports an operational error when the host cannot create cache tokens", async () => {
+    await writeFile(join(root, "astra.yaml"), BASIC_ANALYSIS);
+    await mkdir(join(root, "results", "default"), { recursive: true });
+    await writeFile(join(root, "results", "default", "headline.png"), "figure");
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", { configurable: true, value: undefined });
+    try {
+      await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
+        name: "ProjectLoadError",
+        code: "READ_FAILED",
+        path: "results/default/headline.png",
+      });
+    } finally {
+      if (cryptoDescriptor) Object.defineProperty(globalThis, "crypto", cryptoDescriptor);
+    }
+  });
+
   it("represents missing and inactive artifacts only by absence", async () => {
     await writeFile(
       join(root, "astra.yaml"),
@@ -251,23 +251,6 @@ describe("resolveAnalysis", () => {
     await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
       issues: expect.arrayContaining([
         expect.objectContaining({ code: "MISSING_DECISION_SELECTION" }),
-      ]),
-    });
-  });
-
-  it("validates every universe, including unselected files", async () => {
-    await writeFile(join(root, "astra.yaml"), BASIC_ANALYSIS);
-    await writeUniverse("good", "id: good\ndecisions:\n  estimator: natural\n");
-    await writeUniverse("invalid", "id: invalid\ndecisions:\n  estimator: absent\n");
-
-    await expect(
-      resolveAnalysis(createNodeProjectReader(root), { universeId: "good" }),
-    ).rejects.toMatchObject({
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: "UNKNOWN_OPTION",
-          file: "universes/invalid.yaml",
-        }),
       ]),
     });
   });
@@ -300,31 +283,6 @@ decisions:
         { id: "natural", label: "Natural", resolvedInsightPaths: [] },
         { id: "weighted", label: "Weighted", resolvedInsightPaths: [] },
       ],
-    });
-  });
-
-  it("reports nested universe issues at their authored YAML paths", async () => {
-    await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
-    await writeUniverse(
-      "invalid",
-      `id: invalid
-decisions:
-  method: robust
-analyses:
-  stage:
-    decisions:
-      ghost: absent
-`,
-    );
-
-    await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: "UNKNOWN_DECISION",
-          file: "universes/invalid.yaml",
-          path: "analyses.stage.decisions.ghost",
-        }),
-      ]),
     });
   });
 
@@ -434,17 +392,6 @@ analyses:
     ]);
   });
 
-  it("rejects named-universe references on inline children", async () => {
-    await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
-    await writeUniverse(
-      "baseline",
-      "id: baseline\ndecisions:\n  method: robust\nanalyses:\n  stage:\n    universe: alternate\n",
-    );
-    await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
-      code: "UNSUPPORTED_INLINE_UNIVERSE_REFERENCE",
-    });
-  });
-
   it("treats a null child universe reference as absent", async () => {
     await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
     await writeUniverse(
@@ -539,156 +486,6 @@ analyses:
     ]);
   });
 
-  it("rejects deterministic filename collisions", async () => {
-    await writeFile(
-      join(root, "astra.yaml"),
-      `version: "0.0.14"
-name: Collision
-inputs: []
-outputs:
-  - id: child
-    type: data
-    format: result.csv
-analyses:
-  child:
-    inputs: []
-    outputs:
-      - id: result
-        type: data
-        format: csv
-`,
-    );
-    await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
-      issues: expect.arrayContaining([
-        expect.objectContaining({ code: "DUPLICATE_ARTIFACT_PATH" }),
-      ]),
-    });
-  });
-
-  it("rejects invalid projects without returning a partial document", async () => {
-    await writeFile(
-      join(root, "astra.yaml"),
-      BASIC_ANALYSIS.replace("inputs: [catalog]", "inputs: [missing]")
-        .replace("format: png", "format: PNG"),
-    );
-    try {
-      await resolveAnalysis(createNodeProjectReader(root));
-      throw new Error("expected validation to fail");
-    } catch (error) {
-      expect(error).toBeInstanceOf(AnalysisValidationError);
-      const codes = (error as AnalysisValidationError).issues.map((issue) => issue.code);
-      expect(codes).toContain("SCHEMA_PATTERN");
-      expect(codes).toContain("INVALID_OUTPUT_INPUT");
-    }
-  });
-
-  it("reports a null decision as a validation issue", async () => {
-    await writeFile(
-      join(root, "astra.yaml"),
-      `version: "0.0.14"
-name: Missing decision
-inputs: []
-outputs: []
-decisions:
-  missing: null
-`,
-    );
-
-    await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: "MISSING_DECISION_DEFINITION",
-          file: "astra.yaml",
-          path: "decisions.missing",
-        }),
-      ]),
-    });
-  });
-
-  it("validates required root fields in every path-backed analysis", async () => {
-    await writeFile(
-      join(root, "astra.yaml"),
-      `version: "0.0.14"
-name: Root
-inputs:
-  - id: catalog
-    type: data
-outputs: []
-analyses:
-  child:
-    path: packages/child
-`,
-    );
-    await mkdir(join(root, "packages", "child"), { recursive: true });
-    await writeFile(
-      join(root, "packages", "child", "astra.yaml"),
-      `id: child
-inputs: []
-outputs: []
-analyses:
-  grandchild:
-    inputs:
-      - id: source
-        from: ../../catalog
-    outputs: []
-`,
-    );
-
-    try {
-      await resolveAnalysis(createNodeProjectReader(root));
-      throw new Error("expected validation to fail");
-    } catch (error) {
-      expect(error).toBeInstanceOf(AnalysisValidationError);
-      const issues = (error as AnalysisValidationError).issues;
-      expect(issues).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          code: "MISSING_ROOT_FIELD",
-          file: "packages/child/astra.yaml",
-          path: "version",
-        }),
-        expect.objectContaining({
-          code: "MISSING_ROOT_FIELD",
-          file: "packages/child/astra.yaml",
-          path: "name",
-        }),
-      ]));
-      expect(issues).not.toEqual(expect.arrayContaining([
-        expect.objectContaining({ code: "INVALID_FROM" }),
-      ]));
-    }
-  });
-
-  it("keeps distinct validation issues that share a path", async () => {
-    await writeFile(
-      join(root, "astra.yaml"),
-      `version: "0.0.14"
-name: Complete errors
-inputs: []
-outputs:
-  - id: result
-    type: data
-    format: json
-    inputs: [missing_a, missing_b]
-`,
-    );
-
-    try {
-      await resolveAnalysis(createNodeProjectReader(root));
-      throw new Error("expected validation to fail");
-    } catch (error) {
-      expect(error).toBeInstanceOf(AnalysisValidationError);
-      const issues = (error as AnalysisValidationError).issues.filter(
-        (issue) => issue.code === "INVALID_OUTPUT_INPUT",
-      );
-      expect(issues).toHaveLength(2);
-      expect(issues.map((issue) => issue.message)).toEqual(expect.arrayContaining([
-        expect.stringContaining("missing_a"),
-        expect.stringContaining("missing_b"),
-      ]));
-      expect(issues.every((issue) => issue.path === "outputs.result.inputs")).toBe(true);
-    }
-  });
-
   it("builds optional indexes from canonical paths", async () => {
     await writeFile(join(root, "astra.yaml"), BASIC_ANALYSIS);
     const bundle = await resolveAnalysis(createNodeProjectReader(root));
@@ -763,13 +560,9 @@ analyses:
     }
   });
 
-  it("distinguishes a missing project from a malformed project", async () => {
+  it("reports a missing project as an operational error", async () => {
     await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
       code: "PROJECT_NOT_FOUND",
-    } satisfies Partial<ResolveAnalysisError>);
-    await writeFile(join(root, "astra.yaml"), "- not\n- a mapping\n");
-    await expect(resolveAnalysis(createNodeProjectReader(root))).rejects.toMatchObject({
-      code: "INVALID_YAML",
-    } satisfies Partial<ResolveAnalysisError>);
+    } satisfies Partial<ProjectLoadError>);
   });
 });

@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "yaml";
 
+import { injectAnalysisNodeIds } from "./authored-ids.js";
 import {
   isValidProjectEntry,
   joinProjectPath,
@@ -20,6 +21,8 @@ import {
   type ResolvedInsight,
   type ResolvedOption,
   type ResolvedOutput,
+  type ResolvedRootAnalysis,
+  type OutputProvenance,
 } from "./resolved-types.js";
 import type {
   Analysis,
@@ -32,60 +35,52 @@ import type {
   UniverseNode,
 } from "./types.js";
 import {
-  getDecisionOptions,
-  getDecisionSelections,
-} from "./helpers.js";
-import {
-  validateAnalysis as validateAnalysisSemantics,
-  validateAnalysisRootFields,
-} from "./validation/semantic.js";
-import {
   validateAnalysisStructure,
   validateUniverseStructure,
 } from "./validation/schema.js";
-import type { JsonSchema } from "./schema/index.js";
 
-export interface ResolveOptions {
+export interface ResolveAnalysisOptions {
   /** Select this root universe instead of the first filename. */
   universeId?: string;
-  /** Override the SDK's bundled structural schema. */
-  schema?: JsonSchema;
 }
 
 export interface ValidationIssue {
-  code: string;
-  message: string;
+  readonly code: string;
+  readonly message: string;
   /** Project-relative YAML file containing the invalid value. */
-  file: string;
+  readonly file: string;
   /** Path within the authored YAML document. */
-  path?: string;
+  readonly path?: string;
+}
+
+export interface AnalysisValidationResult {
+  readonly valid: boolean;
+  readonly issues: readonly ValidationIssue[];
 }
 
 export class AnalysisValidationError extends Error {
-  readonly issues: ValidationIssue[];
+  readonly issues: readonly ValidationIssue[];
 
-  constructor(issues: ValidationIssue[]) {
+  constructor(issues: readonly ValidationIssue[]) {
     super(`Invalid ASTRA project (${issues.length} issue${issues.length === 1 ? "" : "s"})`);
     this.name = "AnalysisValidationError";
     this.issues = issues;
   }
 }
 
-export type ResolveAnalysisErrorCode =
+export type ProjectLoadErrorCode =
   | "PROJECT_NOT_FOUND"
   | "READ_FAILED"
-  | "INVALID_YAML"
   | "UNIVERSE_NOT_FOUND"
-  | "UNSUPPORTED_INLINE_UNIVERSE_REFERENCE"
   | "PROJECT_PATH_ESCAPE";
 
-export class ResolveAnalysisError extends Error {
-  readonly code: ResolveAnalysisErrorCode;
+export class ProjectLoadError extends Error {
+  readonly code: ProjectLoadErrorCode;
   readonly path?: string;
 
-  constructor(code: ResolveAnalysisErrorCode, message: string, path?: string) {
-    super(message);
-    this.name = "ResolveAnalysisError";
+  constructor(code: ProjectLoadErrorCode, message: string, path?: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "ProjectLoadError";
     this.code = code;
     this.path = path;
   }
@@ -96,8 +91,8 @@ type Dict = Record<string, unknown>;
 interface LoadedUniverse {
   data: Universe;
   file: string;
-  filename: string;
   id: string;
+  valid: boolean;
 }
 
 interface LoadedAnalysis {
@@ -116,6 +111,7 @@ interface LoadedAnalysis {
   childById: Map<string, LoadedAnalysis>;
   universes: LoadedUniverse[];
   universeById: Map<string, LoadedUniverse>;
+  valid: boolean;
 }
 
 interface SelectionState {
@@ -141,30 +137,91 @@ interface AliasResolution<T> extends AliasTarget<T> {
   immediate: AliasTarget<T>;
 }
 
+interface ConditionLink {
+  decision: Decision;
+  optionId: string;
+  negated: boolean;
+}
+
+interface ConstraintLink {
+  reference: string;
+  decision: Decision;
+  optionId: string;
+}
+
+interface OptionLinks {
+  incompatible: ConstraintLink[];
+  required: ConstraintLink[];
+}
+
+interface ProjectLinks {
+  inputAliases: Map<Input, AliasTarget<Input | Output>>;
+  outputAliases: Map<Output, AliasResolution<Output>>;
+  decisionAliases: Map<Decision, AliasResolution<Decision>>;
+  conditions: Map<Decision | Output, ConditionLink[]>;
+  optionConstraints: Map<Decision, Map<string, OptionLinks>>;
+  optionInsightPaths: Map<Decision, Map<string, string[]>>;
+  insightEvidencePaths: Map<Insight, Array<string | undefined>>;
+  outputProvenance: Map<Output, OutputProvenance>;
+}
+
+function createProjectLinks(): ProjectLinks {
+  return {
+    inputAliases: new Map(),
+    outputAliases: new Map(),
+    decisionAliases: new Map(),
+    conditions: new Map(),
+    optionConstraints: new Map(),
+    optionInsightPaths: new Map(),
+    insightEvidencePaths: new Map(),
+    outputProvenance: new Map(),
+  };
+}
+
 const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 function asDict(value: unknown): Dict | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null
     ? value as Dict
     : undefined;
 }
 
-function liftMapIds(data: Dict): void {
-  for (const field of ["decisions", "prior_insights", "findings"] as const) {
-    const mapping = asDict(data[field]);
-    if (!mapping) continue;
-    for (const [id, raw] of Object.entries(mapping)) {
-      const value = asDict(raw);
-      if (!value) continue;
-      if (value.id == null) value.id = id;
-      if (field === "decisions") {
-        const options = asDict(value.options);
-        if (options) for (const [optionId, rawOption] of Object.entries(options)) {
-          const option = asDict(rawOption);
-          if (option && option.id == null) option.id = optionId;
-        }
-      }
-    }
+function emptyRecord<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+function hasObjectCycle(value: unknown, ancestors = new Set<object>()): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (ancestors.has(value)) return true;
+  ancestors.add(value);
+  for (const child of Object.values(value)) {
+    if (hasObjectCycle(child, ancestors)) return true;
+  }
+  ancestors.delete(value);
+  return false;
+}
+
+function hasNonJsonValue(value: unknown): boolean {
+  if (typeof value === "number") return !Number.isFinite(value);
+  if (Array.isArray(value)) return value.some(hasNonJsonValue);
+  if (value === null || typeof value !== "object") return false;
+  const mapping = asDict(value);
+  return !mapping || Object.values(mapping).some(hasNonJsonValue);
+}
+
+/** LinkML serializations use null object fields to mean "not supplied". */
+function omitNullObjectFields(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) omitNullObjectFields(item);
+    return;
+  }
+  const mapping = asDict(value);
+  if (!mapping) return;
+  for (const [key, child] of Object.entries(mapping)) {
+    if (child === null) delete mapping[key];
+    else omitNullObjectFields(child);
   }
 }
 
@@ -198,11 +255,12 @@ function causeMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function pathError(path: string, error: unknown): ResolveAnalysisError {
-  return new ResolveAnalysisError(
+function pathError(path: string, error: unknown): ProjectLoadError {
+  return new ProjectLoadError(
     "PROJECT_PATH_ESCAPE",
     `Project path escapes the project root: ${path}. ${causeMessage(error)}`,
     path,
+    error,
   );
 }
 
@@ -210,12 +268,13 @@ function readerError(
   action: string,
   path: string,
   error: unknown,
-): ResolveAnalysisError {
+): ProjectLoadError {
   if (error instanceof ProjectPathError) return pathError(path, error);
-  return new ResolveAnalysisError(
+  return new ProjectLoadError(
     "READ_FAILED",
     `Could not ${action} ${path || "the project root"}: ${causeMessage(error)}`,
     path,
+    error,
   );
 }
 
@@ -231,32 +290,42 @@ async function readStat(
   reader: ProjectReader,
   path: string,
 ): Promise<ProjectEntry | undefined> {
-  let entry: ProjectEntry | undefined;
+  let entry: unknown;
   try {
     entry = await reader.stat(path);
   } catch (error) {
     throw readerError("stat", path, error);
   }
-  if (entry && !isValidProjectEntry(entry)) {
-    throw new ResolveAnalysisError(
+  if (entry === undefined) return undefined;
+  if (entry === null || typeof entry !== "object"
+    || !isValidProjectEntry(entry as ProjectEntry)) {
+    throw new ProjectLoadError(
       "READ_FAILED",
       `Reader returned malformed metadata for ${path || "the project root"}`,
       path,
     );
   }
-  return entry;
+  return entry as ProjectEntry;
 }
 
 async function readDirectory(
   reader: ProjectReader,
   path: string,
 ): Promise<ProjectDirectoryEntry[]> {
-  let entries: ProjectDirectoryEntry[];
+  let response: unknown;
   try {
-    entries = await reader.readDirectory(path);
+    response = await reader.readDirectory(path);
   } catch (error) {
     throw readerError("read directory", path, error);
   }
+  if (!Array.isArray(response)) {
+    throw new ProjectLoadError(
+      "READ_FAILED",
+      `Reader returned a malformed directory listing for ${path || "the project root"}`,
+      path,
+    );
+  }
+  const entries = response as ProjectDirectoryEntry[];
   for (const entry of entries) {
     if (!entry
       || typeof entry.name !== "string"
@@ -266,7 +335,7 @@ async function readDirectory(
       || entry.name.includes("/")
       || entry.name.includes("\\")
       || (entry.type !== "file" && entry.type !== "directory")) {
-      throw new ResolveAnalysisError(
+      throw new ProjectLoadError(
         "READ_FAILED",
         `Reader returned a malformed directory entry for ${path || "the project root"}`,
         path,
@@ -279,24 +348,38 @@ async function readDirectory(
 async function readMapping(
   reader: ProjectReader,
   path: string,
-): Promise<Dict> {
-  let text: string;
+  issues: ValidationIssue[],
+): Promise<{ data: Dict; valid: boolean }> {
+  let text: unknown;
   try {
     text = await reader.readText(path);
   } catch (error) {
     throw readerError("read", path, error);
   }
+  if (typeof text !== "string") {
+    throw new ProjectLoadError(
+      "READ_FAILED",
+      `Reader returned non-text content for ${path}`,
+      path,
+    );
+  }
   try {
     const parsed: unknown = parseYaml(text);
     const mapping = asDict(parsed);
     if (!mapping) throw new Error("YAML root must be a mapping/object");
-    return mapping;
+    if (hasObjectCycle(mapping)) throw new Error("YAML must not contain recursive aliases");
+    if (hasNonJsonValue(mapping)) {
+      throw new Error("YAML must contain only JSON-compatible values");
+    }
+    omitNullObjectFields(mapping);
+    return { data: mapping, valid: true };
   } catch (error) {
-    throw new ResolveAnalysisError(
-      "INVALID_YAML",
-      `Could not parse ${path}: ${causeMessage(error)}`,
-      path,
-    );
+    pushIssue(issues, {
+      code: "INVALID_YAML",
+      message: `Could not parse ${path}: ${causeMessage(error)}`,
+      file: path,
+    });
+    return { data: {}, valid: false };
   }
 }
 
@@ -322,11 +405,13 @@ async function loadUniverses(
   const stat = await readStat(reader, directory);
   if (!stat) return;
   if (stat.type !== "directory") {
-    throw new ResolveAnalysisError(
-      "READ_FAILED",
-      `Expected ${directory} to be a directory`,
-      directory,
-    );
+    pushIssue(issues, {
+      code: "INVALID_UNIVERSES_DIRECTORY",
+      message: `Expected ${directory} to be a directory`,
+      file: context.file,
+      path: "universes",
+    });
+    return;
   }
   const filenames = (await readDirectory(reader, directory))
     .filter((entry) => entry.type === "file" && /\.ya?ml$/.test(entry.name))
@@ -345,9 +430,10 @@ async function loadUniverses(
       });
     }
     seenStems.add(stem);
-    const data = await readMapping(reader, file);
+    const parsed = await readMapping(reader, file, issues);
+    const data = parsed.data;
     const id = typeof data.id === "string" ? data.id : stem;
-    if (data.id !== stem) {
+    if (parsed.valid && data.id !== stem) {
       pushIssue(issues, {
         code: "UNIVERSE_FILENAME_MISMATCH",
         message: `Universe id must match filename '${stem}'`,
@@ -355,7 +441,12 @@ async function loadUniverses(
         path: "id",
       });
     }
-    const loaded = { data: data as unknown as Universe, file, filename, id };
+    const loaded = {
+      data: data as unknown as Universe,
+      file,
+      id,
+      valid: parsed.valid,
+    };
     context.universes.push(loaded);
     if (!context.universeById.has(id)) context.universeById.set(id, loaded);
   }
@@ -376,22 +467,28 @@ async function loadAnalysisFile(
   },
 ): Promise<LoadedAnalysis> {
   const stat = await readStat(reader, file);
+  let exists = true;
   if (!stat || stat.type !== "file") {
     if (!options.parent) {
-      throw new ResolveAnalysisError(
+      throw new ProjectLoadError(
         "PROJECT_NOT_FOUND",
         "No astra.yaml file was found in the project root",
         file,
       );
     }
-    throw new ResolveAnalysisError(
-      "READ_FAILED",
-      `Declared analysis file does not exist: ${file}`,
-      file,
-    );
+    pushIssue(issues, {
+      code: "ANALYSIS_FILE_NOT_FOUND",
+      message: `Declared analysis file does not exist: ${file}`,
+      file: options.parent.file,
+      path: authoredPath(options.parent, "analyses", options.id),
+    });
+    exists = false;
   }
-  const data = await readMapping(reader, file);
-  liftMapIds(data);
+  const parsed = exists
+    ? await readMapping(reader, file, issues)
+    : { data: {}, valid: false };
+  const data = parsed.data;
+  injectAnalysisNodeIds(data);
   const context = {
     data: data as Analysis,
     file,
@@ -407,10 +504,13 @@ async function loadAnalysisFile(
     childById: new Map<string, LoadedAnalysis>(),
     universes: [],
     universeById: new Map<string, LoadedUniverse>(),
+    valid: parsed.valid,
   } satisfies LoadedAnalysis;
   context.physicalRoot = context;
-  await loadUniverses(reader, context, issues);
-  await loadChildren(reader, context, issues, new Set([...options.ancestry, file]));
+  if (exists) {
+    await loadUniverses(reader, context, issues);
+    await loadChildren(reader, context, issues, new Set([...options.ancestry, file]));
+  }
   return context;
 }
 
@@ -428,14 +528,26 @@ async function loadChildren(
     const childSegments = [...context.canonicalSegments, id];
     let child: LoadedAnalysis;
     if (typeof childData.path === "string" && childData.path) {
-      const directory = normalizedJoin(context.directory, childData.path);
-      const file = normalizedJoin(directory, "astra.yaml");
+      let directory: string;
+      let file: string;
+      try {
+        directory = normalizedJoin(context.directory, childData.path);
+        file = normalizedJoin(directory, "astra.yaml");
+      } catch (error) {
+        pushIssue(issues, {
+          code: "ANALYSIS_PATH_ESCAPE",
+          message: `Analysis.path escapes the project root: ${childData.path}. ${causeMessage(error)}`,
+          file: context.file,
+          path: `${authoredPath(context, "analyses", id)}.path`,
+        });
+        continue;
+      }
       if (ancestry.has(file)) {
         pushIssue(issues, {
           code: "ANALYSIS_PATH_CYCLE",
           message: `Analysis.path creates a loading cycle through ${file}`,
           file: context.file,
-          path: authoredPath(context, "analyses", id),
+          path: `${authoredPath(context, "analyses", id)}.path`,
         });
         continue;
       }
@@ -451,7 +563,7 @@ async function loadChildren(
     } else {
       const cloned = structuredClone(childData) as Analysis;
       if (cloned.id == null) cloned.id = id;
-      liftMapIds(cloned as Dict);
+      injectAnalysisNodeIds(cloned as Dict);
       child = {
         data: cloned,
         file: context.file,
@@ -467,6 +579,7 @@ async function loadChildren(
         childById: new Map<string, LoadedAnalysis>(),
         universes: [],
         universeById: new Map<string, LoadedUniverse>(),
+        valid: context.valid,
       };
       await loadChildren(reader, child, issues, ancestry);
     }
@@ -494,6 +607,7 @@ function mapKeyIssue(
 
 function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]): void {
   for (const context of walkLoaded(root)) {
+    if (!context.valid) continue;
     if (context.pathBacked
       && context.id
       && context.data.id != null
@@ -529,7 +643,7 @@ function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]):
       const child = asDict(raw);
       if (!child) continue;
       const path = authoredPath(context, "analyses", id)!;
-      if (child.path !== undefined) {
+      if (typeof child.path === "string" && child.path) {
         const extra = Object.keys(child).filter((field) => field !== "path");
         if (extra.length) pushIssue(issues, {
           code: "PATH_FIELD_CONFLICT",
@@ -570,6 +684,7 @@ function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]):
   };
   for (const context of walkLoaded(root)) {
     for (const universe of context.universes) {
+      if (!universe.valid) continue;
       visitUniverseNode(universe.data, universe.file, "");
     }
   }
@@ -578,97 +693,34 @@ function validateMapAgreements(root: LoadedAnalysis, issues: ValidationIssue[]):
 async function validateLoadedStructures(
   root: LoadedAnalysis,
   issues: ValidationIssue[],
-  schema?: JsonSchema,
 ): Promise<void> {
   for (const context of walkLoaded(root)) {
-    if (context === context.physicalRoot) {
-      for (const issue of await validateAnalysisStructure(
-        context.data as unknown as Dict,
-        schema ? { schema } : {},
-      )) {
+    if (context.valid && context === context.physicalRoot) {
+      const structuralIssues = validateAnalysisStructure(context.data as unknown as Dict);
+      if (structuralIssues.length) {
+        for (const owned of walkLoaded(root)) {
+          if (owned.physicalRoot === context) owned.valid = false;
+        }
+      }
+      for (const issue of structuralIssues) {
         pushIssue(issues, { ...issue, file: context.file });
       }
     }
     for (const universe of context.universes) {
-      for (const issue of await validateUniverseStructure(
-        universe.data as unknown as Dict,
-        schema ? { schema } : {},
-      )) {
+      if (!universe.valid) continue;
+      const structuralIssues = validateUniverseStructure(universe.data as unknown as Dict);
+      if (structuralIssues.length) universe.valid = false;
+      for (const issue of structuralIssues) {
         pushIssue(issues, { ...issue, file: universe.file });
       }
     }
   }
 }
 
-function assembledAnalysis(context: LoadedAnalysis): Analysis {
-  const { path: _path, analyses, ...data } = context.data;
-  if (analyses !== undefined && !asDict(analyses)) {
-    return { ...data, analyses } as Analysis;
-  }
-  const assembledChildren: Record<string, unknown> = { ...(asDict(analyses) ?? {}) };
-  for (const child of context.children) assembledChildren[child.id!] = assembledAnalysis(child);
-  return {
-    ...data,
-    ...(context.id ? { id: context.id } : {}),
-    analyses: assembledChildren as Record<string, Analysis>,
-  };
-}
-
-function validateLoadedSemantics(
-  root: LoadedAnalysis,
-  issues: ValidationIssue[],
-): void {
-  for (const context of walkLoaded(root)) {
-    if (context !== context.physicalRoot) continue;
-    for (const error of validateAnalysisRootFields(context.data)) {
-      pushIssue(issues, {
-        code: error.code,
-        message: error.message,
-        file: context.file,
-        path: error.path,
-      });
-    }
-  }
-
-  const contexts = walkLoaded(root).sort(
-    (left, right) => right.canonicalSegments.length - left.canonicalSegments.length,
-  );
-  for (const error of validateAnalysisSemantics(assembledAnalysis(root))) {
-    const globalPath = error.path;
-    let owner = root;
-    let suffix = globalPath;
-    if (globalPath) {
-      for (const context of contexts) {
-        const prefix = context.canonicalSegments
-          .flatMap((segment) => ["analyses", segment])
-          .join(".");
-        if (prefix && (globalPath === prefix || globalPath.startsWith(`${prefix}.`))) {
-          owner = context;
-          suffix = globalPath === prefix ? undefined : globalPath.slice(prefix.length + 1);
-          break;
-        }
-      }
-    }
-    if (error.code === "MISSING_SUB_FIELD" && owner.pathBacked) {
-      // The physical-root pass reports the same missing inputs/outputs with
-      // precise local paths.
-      continue;
-    }
-    const localPrefix = owner.authoredSegments
-      .flatMap((segment) => ["analyses", segment])
-      .join(".");
-    const localPath = [localPrefix, suffix].filter(Boolean).join(".") || undefined;
-    pushIssue(issues, {
-      code: error.code,
-      message: error.message,
-      file: owner.file,
-      path: localPath,
-    });
-  }
-}
-
 function universeChild(data: Universe | UniverseNode, id: string): UniverseNode {
-  return data.analyses?.[id] ?? {};
+  const analyses = asDict(data.analyses);
+  if (!analyses || !Object.hasOwn(analyses, id)) return {};
+  return asDict(analyses[id]) as unknown as UniverseNode ?? {};
 }
 
 function buildSelectionPlan(
@@ -697,7 +749,8 @@ function buildSelectionPlan(
       effectiveUniverseId: currentUniverseId,
     });
     const declaredChildren = asDict((data as unknown as Dict).analyses) ?? {};
-    for (const id of Object.keys(declaredChildren)) {
+    for (const [id, rawChild] of Object.entries(declaredChildren)) {
+      if (!asDict(rawChild)) continue;
       if (!context.childById.has(id)) {
         const childPath = [pathPrefix, "analyses", id].filter(Boolean).join(".");
         pushIssue(issues, {
@@ -714,13 +767,16 @@ function buildSelectionPlan(
       const childPath = [pathPrefix, "analyses", childId].filter(Boolean).join(".");
       if (typeof childSelection.universe === "string") {
         if (!child.pathBacked) {
-          throw new ResolveAnalysisError(
-            "UNSUPPORTED_INLINE_UNIVERSE_REFERENCE",
-            `Inline analysis '${analysisPath(child)}' cannot select a named universe`,
+          pushIssue(issues, {
+            code: "UNSUPPORTED_INLINE_UNIVERSE_REFERENCE",
+            message: `Inline analysis '${analysisPath(child)}' cannot select a named universe`,
             file,
-          );
+            path: `${childPath}.universe`,
+          });
+          visit(child, {}, file, childPath, currentMode, currentUniverseId);
+          continue;
         }
-        if (childSelection.decisions !== undefined || childSelection.analyses !== undefined) {
+        if (childSelection.decisions != null || childSelection.analyses != null) {
           pushIssue(issues, {
             code: "UNIVERSE_REFERENCE_CONFLICT",
             message: "universe is mutually exclusive with inline decisions and analyses",
@@ -730,11 +786,14 @@ function buildSelectionPlan(
         }
         const named = child.universeById.get(childSelection.universe);
         if (!named) {
-          throw new ResolveAnalysisError(
-            "UNIVERSE_NOT_FOUND",
-            `Universe '${childSelection.universe}' was not found beside ${child.file}`,
-            normalizedJoin(child.directory, "universes", `${childSelection.universe}.yaml`),
-          );
+          pushIssue(issues, {
+            code: "UNIVERSE_NOT_FOUND",
+            message: `Universe '${childSelection.universe}' was not found beside ${child.file}`,
+            file,
+            path: `${childPath}.universe`,
+          });
+          visit(child, {}, file, childPath, currentMode, currentUniverseId);
+          continue;
         }
         visit(child, named.data, named.file, "", "universe", named.id);
       } else {
@@ -763,7 +822,7 @@ function localOutputs(context: LoadedAnalysis): Output[] {
 }
 
 function localDecisions(context: LoadedAnalysis): Record<string, Decision> {
-  const decisions: Record<string, Decision> = {};
+  const decisions = emptyRecord<Decision>();
   for (const [id, raw] of Object.entries(asDict(context.data.decisions) ?? {})) {
     const decision = asDict(raw);
     if (decision) decisions[id] = decision as unknown as Decision;
@@ -772,14 +831,36 @@ function localDecisions(context: LoadedAnalysis): Record<string, Decision> {
 }
 
 function decisionOptions(decision: Decision): Record<string, Option> {
-  return getDecisionOptions(decision as unknown as Dict) as unknown as Record<string, Option>;
+  const options = emptyRecord<Option>();
+  for (const [id, raw] of Object.entries(asDict(decision.options) ?? {})) {
+    if (typeof raw === "string") options[id] = { label: raw };
+    else {
+      const option = asDict(raw);
+      if (option) options[id] = option as unknown as Option;
+    }
+  }
+  return options;
+}
+
+function decisionSelections(node: Universe | UniverseNode): Record<string, string> {
+  const selections = emptyRecord<string>();
+  for (const [id, raw] of Object.entries(asDict(node.decisions) ?? {})) {
+    const optionId = typeof raw === "string" ? raw : asDict(raw)?.option_id;
+    if (typeof optionId === "string") selections[id] = optionId;
+  }
+  return selections;
 }
 
 function localInsights(
   context: LoadedAnalysis,
   collection: "prior_insights" | "findings",
 ): Record<string, Insight> {
-  return asDict(context.data[collection]) as unknown as Record<string, Insight> ?? {};
+  const insights = emptyRecord<Insight>();
+  for (const [id, raw] of Object.entries(asDict(context.data[collection]) ?? {})) {
+    const insight = asDict(raw);
+    if (insight) insights[id] = insight as unknown as Insight;
+  }
+  return insights;
 }
 
 function findById<T extends { id: string }>(items: T[], id: string): T | undefined {
@@ -798,35 +879,149 @@ function parseUpwardReference(reference: string): { up: number; rest: string[] }
   return { up, rest };
 }
 
-class ProjectResolver {
-  private readonly inputAliases = new Map<Input, AliasTarget<Input | Output>>();
-  private readonly outputAliases = new Map<Output, AliasResolution<Output>>();
-  private readonly decisionAliases = new Map<Decision, AliasResolution<Decision>>();
+interface TemplateField {
+  field: string;
+  formatSpec: string;
+  conversion: string | undefined;
+}
+
+function* iterTemplateFields(command: string): Generator<TemplateField> {
+  let index = 0;
+  while (index < command.length) {
+    const character = command[index]!;
+    if (character === "{") {
+      if (command[index + 1] === "{") {
+        index += 2;
+        continue;
+      }
+      const end = command.indexOf("}", index + 1);
+      if (end < 0) throw new Error("Single '{' encountered in format string");
+      let field = command.slice(index + 1, end);
+      let conversion: string | undefined;
+      let formatSpec = "";
+      const colon = field.indexOf(":");
+      if (colon >= 0) {
+        formatSpec = field.slice(colon + 1);
+        field = field.slice(0, colon);
+      }
+      const bang = field.indexOf("!");
+      if (bang >= 0) {
+        conversion = field.slice(bang + 1);
+        field = field.slice(0, bang);
+      }
+      yield { field, formatSpec, conversion };
+      index = end + 1;
+    } else if (character === "}") {
+      if (command[index + 1] === "}") {
+        index += 2;
+        continue;
+      }
+      throw new Error("Single '}' encountered in format string");
+    } else {
+      index += 1;
+    }
+  }
+}
+
+function detectOutputCycle(graph: Map<string, string[]>): string[] | undefined {
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const path: string[] = [];
+  const visit = (id: string): string[] | undefined => {
+    visiting.add(id);
+    path.push(id);
+    for (const dependency of graph.get(id) ?? []) {
+      if (visiting.has(dependency)) {
+        const start = path.indexOf(dependency);
+        return [...path.slice(start), dependency];
+      }
+      if (!visited.has(dependency)) {
+        const cycle = visit(dependency);
+        if (cycle) return cycle;
+      }
+    }
+    path.pop();
+    visiting.delete(id);
+    visited.add(id);
+    return undefined;
+  };
+  for (const id of graph.keys()) {
+    if (!visited.has(id)) {
+      const cycle = visit(id);
+      if (cycle) return cycle;
+    }
+  }
+  return undefined;
+}
+
+class ProjectCompiler {
   private readonly selectedMemo = new Map<Decision, string | undefined>();
+  private readonly defaultSelectionsMemo = new Map<LoadedAnalysis, Record<string, string>>();
+  private readonly unstableDefaultContexts = new Set<LoadedAnalysis>();
   private readonly decisionActiveMemo = new Map<Decision, boolean>();
   private readonly outputActiveMemo = new Map<Output, boolean>();
 
   constructor(
     private readonly root: LoadedAnalysis,
-    private readonly plan: SelectionPlan,
+    private readonly plan: SelectionPlan | undefined,
     private readonly issues: ValidationIssue[],
+    private readonly links: ProjectLinks,
   ) {}
 
-  validate(): void {
-    for (const context of this.plan.states.keys()) {
+  /** Link and validate every configuration-independent authored reference once. */
+  validateProject(): void {
+    for (const context of walkLoaded(this.root)) {
+      if (!context.valid) continue;
+      this.validateRequiredFields(context);
       this.validateDuplicateIds(context);
       for (const input of localInputs(context)) if (input.from) this.resolveInputAlias(context, input);
-      for (const output of localOutputs(context)) {
-        if (output.from) this.resolveOutputAlias(context, output);
-        else this.resolveOutputProvenance(context, output);
-      }
+      for (const output of localOutputs(context)) if (output.from) this.resolveOutputAlias(context, output);
       for (const decision of Object.values(localDecisions(context))) {
         if (decision.from) this.resolveDecisionAlias(context, decision);
       }
-      this.validateSelection(context);
+      this.validateDecisions(context);
+      for (const output of localOutputs(context)) {
+        if (!output.from) this.linkOutputProvenance(context, output);
+        this.linkConditions(context, output, "Output");
+        const command = output.recipe?.command;
+        if (typeof command === "string" && command) {
+          this.validateCommandTemplate(
+            context,
+            command,
+            new Set(output.inputs ?? []),
+            new Set(output.decisions ?? []),
+            `${authoredPath(context, "outputs", output.id)}.recipe.command`,
+          );
+        }
+      }
+      for (const [id, decision] of Object.entries(localDecisions(context))) {
+        this.linkConditions(context, decision, "Decision", id);
+      }
       this.validateInsights(context);
     }
+    this.validateOutputCycles();
+  }
+
+  /** Validate one universe/default configuration using the prelinked project. */
+  validateConfiguration(): void {
+    for (const context of this.configuration.states.keys()) {
+      this.validateSelectionReferences(context);
+      this.validateSelection(context);
+    }
     this.validateArtifactPaths();
+  }
+
+  /** Validate the context-independent references in a nested universe file. */
+  validateUniverseReferences(): void {
+    for (const context of this.configuration.states.keys()) {
+      this.validateSelectionReferences(context);
+    }
+    this.validateArtifactPaths();
+  }
+
+  private get configuration(): SelectionPlan {
+    if (!this.plan) throw new Error("A selection plan is required for configuration evaluation");
+    return this.plan;
   }
 
   private error(
@@ -837,6 +1032,348 @@ class ProjectResolver {
     file = context.file,
   ): void {
     pushIssue(this.issues, { code, message, file, path });
+  }
+
+  private validateRequiredFields(context: LoadedAnalysis): void {
+    if (context === context.physicalRoot) {
+      for (const field of ["version", "name", "inputs", "outputs"] as const) {
+        if (context.data[field] == null) {
+          this.error(
+            context,
+            "MISSING_ROOT_FIELD",
+            `Root analysis is missing required field '${field}'`,
+            field,
+          );
+        }
+      }
+      return;
+    }
+    for (const field of ["inputs", "outputs"] as const) {
+      if (context.data[field] == null) {
+        this.error(
+          context,
+          "MISSING_SUB_FIELD",
+          `Sub-analysis '${context.id}' is missing required field: ${field}`,
+          `${authoredPath(context)}.${field}`,
+        );
+      }
+    }
+  }
+
+  private validateDecisions(context: LoadedAnalysis): void {
+    const rawDecisions = asDict(context.data.decisions) ?? {};
+    const decisions = localDecisions(context);
+    for (const [id, raw] of Object.entries(rawDecisions)) {
+      const path = authoredPath(context, "decisions", id);
+      const decision = asDict(raw) as unknown as Decision | undefined;
+      if (!decision) {
+        this.error(
+          context,
+          "MISSING_DECISION_DEFINITION",
+          `Decision '${id}' has no definition`,
+          path,
+        );
+        continue;
+      }
+      if (decision.from) continue;
+
+      const options = decisionOptions(decision);
+      if (decision.default != null && !options[decision.default]) {
+        this.error(
+          context,
+          "INVALID_DEFAULT",
+          `Default option '${decision.default}' not found in options`,
+          path,
+        );
+      }
+
+      const linkedOptions = new Map<string, OptionLinks>();
+      const linkedInsightPaths = new Map<string, string[]>();
+      for (const [optionId, option] of Object.entries(options)) {
+        const optionPath = `${path}.options.${optionId}`;
+        const insightPaths: string[] = [];
+        for (const [index, insightId] of (option.insights ?? []).entries()) {
+          const linked = this.resolveOptionInsight(
+            context,
+            insightId,
+            `${optionPath}.insights[${index}]`,
+          );
+          if (linked) insightPaths.push(linked);
+        }
+        linkedInsightPaths.set(optionId, insightPaths);
+
+        const links: OptionLinks = { incompatible: [], required: [] };
+        for (const reference of option.incompatible_with ?? []) {
+          const linked = this.linkConstraint(context, decisions, reference, optionPath);
+          if (linked) links.incompatible.push(linked);
+        }
+        for (const reference of option.requires ?? []) {
+          const linked = this.linkConstraint(context, decisions, reference, optionPath);
+          if (linked) links.required.push(linked);
+        }
+        linkedOptions.set(optionId, links);
+
+        if (option.excluded === true && !option.excluded_reason) {
+          this.error(
+            context,
+            "MISSING_EXCLUDED_REASON",
+            `Excluded option '${optionId}' must have an 'excluded_reason'`,
+            optionPath,
+          );
+        }
+        if (option.excluded_reason && option.excluded !== true) {
+          this.error(
+            context,
+            "ORPHAN_EXCLUDED_REASON",
+            `Option '${optionId}' has 'excluded_reason' but is not marked excluded`,
+            optionPath,
+          );
+        }
+      }
+      this.links.optionConstraints.set(decision, linkedOptions);
+      this.links.optionInsightPaths.set(decision, linkedInsightPaths);
+
+      if (decision.default != null && options[decision.default]?.excluded === true) {
+        this.error(
+          context,
+          "EXCLUDED_DEFAULT",
+          `Default option '${decision.default}' is marked as excluded`,
+          path,
+        );
+      }
+    }
+  }
+
+  private resolveOptionInsight(
+    context: LoadedAnalysis,
+    reference: string,
+    path: string,
+  ): string | undefined {
+    let owner: LoadedAnalysis | undefined = context;
+    let insightId = reference;
+    if (ID_PATTERN.test(reference)) {
+      insightId = reference;
+    } else {
+      const parsed = parseUpwardReference(reference);
+      if (!parsed || parsed.rest.length !== 1) {
+        this.error(
+          context,
+          "INVALID_INSIGHT_REF",
+          `Option insight '${reference}' must be a local id or an ancestor path such as '../id'`,
+          path,
+        );
+        return undefined;
+      }
+      for (let count = 0; count < parsed.up; count += 1) owner = owner?.parent;
+      insightId = parsed.rest[0]!;
+      if (!owner) {
+        this.error(
+          context,
+          "INVALID_INSIGHT_REF",
+          `Option insight '${reference}' escapes the analysis tree`,
+          path,
+        );
+        return undefined;
+      }
+    }
+    if (!localInsights(owner, "prior_insights")[insightId]) {
+      this.error(
+        context,
+        "INVALID_INSIGHT_REF",
+        `Option insight '${reference}' not found in the referenced prior_insights scope`,
+        path,
+      );
+      return undefined;
+    }
+    return recordPath(owner, "prior_insights", insightId);
+  }
+
+  private linkConstraint(
+    context: LoadedAnalysis,
+    decisions: Record<string, Decision>,
+    reference: string,
+    path: string,
+  ): ConstraintLink | undefined {
+    const parts = reference.split(".");
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      this.error(
+        context,
+        "INVALID_CONSTRAINT_FORMAT",
+        `Constraint '${reference}' should be in 'decision.option' format`,
+        path,
+      );
+      return undefined;
+    }
+    const [decisionId, optionId] = parts as [string, string];
+    const decision = decisions[decisionId];
+    if (!decision) {
+      this.error(
+        context,
+        "INVALID_CONSTRAINT_REF",
+        `Constraint ref '${reference}' points to non-existent decision '${decisionId}'`,
+        path,
+      );
+      return undefined;
+    }
+    const effective = decision.from
+      ? this.resolveDecisionAlias(context, decision)?.value
+      : decision;
+    if (!effective || !decisionOptions(effective)[optionId]) {
+      this.error(
+        context,
+        "INVALID_CONSTRAINT_REF",
+        `Constraint ref '${reference}' points to non-existent option '${optionId}'`,
+        path,
+      );
+      return undefined;
+    }
+    return { reference, decision, optionId };
+  }
+
+  private linkConditions(
+    context: LoadedAnalysis,
+    owner: Decision | Output,
+    ownerKind: "Decision" | "Output",
+    forbidSelfRef?: string,
+  ): void {
+    const links: ConditionLink[] = [];
+    const path = authoredPath(
+      context,
+      ownerKind === "Decision" ? "decisions" : "outputs",
+      owner.id,
+    );
+    for (const condition of owner.when ?? []) {
+      const negated = condition.startsWith("~");
+      const reference = negated ? condition.slice(1) : condition;
+      const parts = reference.split(".");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        this.error(
+          context,
+          "INVALID_WHEN_REF",
+          `${ownerKind} 'when' condition '${condition}' has invalid format`,
+          path,
+        );
+        continue;
+      }
+      const [decisionId, optionId] = parts as [string, string];
+      const decision = localDecisions(context)[decisionId];
+      if (!decision) {
+        const subject = ownerKind === "Output" ? "Output 'when'" : "'when'";
+        this.error(
+          context,
+          "INVALID_WHEN_REF",
+          `${subject} references non-existent decision '${decisionId}'`,
+          path,
+        );
+        continue;
+      }
+      const effective = decision.from
+        ? this.resolveDecisionAlias(context, decision)?.value
+        : decision;
+      if (!effective || !decisionOptions(effective)[optionId]) {
+        const subject = ownerKind === "Output" ? "Output 'when'" : "'when'";
+        this.error(
+          context,
+          "INVALID_WHEN_REF",
+          `${subject} references non-existent option '${optionId}' in decision '${decisionId}'`,
+          path,
+        );
+        continue;
+      }
+      if (forbidSelfRef === decisionId) {
+        this.error(context, "INVALID_WHEN_REF", "'when' cannot reference own decision", path);
+        continue;
+      }
+      links.push({ decision, optionId, negated });
+    }
+    this.links.conditions.set(owner, links);
+  }
+
+  private validateOutputCycles(): void {
+    const owners = new Map<string, { context: LoadedAnalysis; output: Output }>();
+    const graph = new Map<string, string[]>();
+    for (const context of walkLoaded(this.root)) {
+      if (!context.valid) continue;
+      for (const output of localOutputs(context)) {
+        if (output.from) continue;
+        const path = recordPath(context, "outputs", output.id);
+        owners.set(path, { context, output });
+        graph.set(path, []);
+      }
+    }
+    for (const [path] of graph) {
+      const provenance = this.links.outputProvenance.get(owners.get(path)!.output);
+      graph.set(
+        path,
+        (provenance?.inputPaths ?? []).filter((dependency) => graph.has(dependency)),
+      );
+    }
+    const cycle = detectOutputCycle(graph);
+    if (cycle) {
+      const owner = owners.get(cycle[0]!)!;
+      this.error(
+        owner.context,
+        "OUTPUT_CYCLE",
+        `Dependency cycle detected: ${cycle.join(" -> ")}`,
+        authoredPath(owner.context, "outputs", owner.output.id),
+      );
+    }
+  }
+
+  private validateCommandTemplate(
+    context: LoadedAnalysis,
+    command: string,
+    declaredInputs: Set<string>,
+    declaredDecisions: Set<string>,
+    path: string,
+  ): void {
+    let fields: TemplateField[];
+    try {
+      fields = [...iterTemplateFields(command)];
+    } catch (error) {
+      this.error(context, "INVALID_COMMAND_TEMPLATE", causeMessage(error), path);
+      return;
+    }
+    for (const { field, formatSpec, conversion } of fields) {
+      if (field === "" || formatSpec || conversion) {
+        this.error(
+          context,
+          "INVALID_COMMAND_TEMPLATE",
+          `Invalid command placeholder '{${field}}'`,
+          path,
+        );
+        continue;
+      }
+      if (field === "output" || field === "inputs") continue;
+      const dot = field.indexOf(".");
+      if (dot >= 0) {
+        const head = field.slice(0, dot);
+        const tail = field.slice(dot + 1);
+        const declared = head === "inputs"
+          ? declaredInputs
+          : head === "decisions"
+            ? declaredDecisions
+            : undefined;
+        if (declared && !tail.includes(".")) {
+          if (!declared.has(tail)) {
+            const singular = head === "inputs" ? "input" : "decision";
+            this.error(
+              context,
+              "UNDECLARED_TEMPLATE_REF",
+              `Command placeholder '{${field}}' references undeclared ${singular} '${tail}' (add it to Output.${head})`,
+              path,
+            );
+          }
+          continue;
+        }
+      }
+      this.error(
+        context,
+        "INVALID_COMMAND_TEMPLATE",
+        `Unknown command placeholder '{${field}}' (use {inputs}, {inputs.<id>}, {decisions.<id>}, or {output})`,
+        path,
+      );
+    }
   }
 
   private validateDuplicateIds(context: LoadedAnalysis): void {
@@ -876,20 +1413,15 @@ class ProjectResolver {
   private resolveInputAlias(
     context: LoadedAnalysis,
     input: Input,
-    chain = new Set<Input | Output>(),
   ): AliasTarget<Input | Output> | undefined {
-    const cached = this.inputAliases.get(input);
+    const cached = this.links.inputAliases.get(input);
     if (cached) return cached;
-    if (chain.has(input)) {
-      this.error(context, "ALIAS_CYCLE", `Alias cycle at input '${input.id}'`);
-      return undefined;
-    }
-    chain.add(input);
+    const path = authoredPath(context, "inputs", input.id);
     const parsed = parseUpwardReference(input.from ?? "");
     let owner: LoadedAnalysis | undefined = context;
     if (parsed) for (let count = 0; count < parsed.up; count += 1) owner = owner?.parent;
     if (!parsed || !owner) {
-      this.error(context, "INVALID_FROM", `Invalid input alias '${input.from}'`);
+      this.error(context, "INVALID_FROM", `Invalid input alias '${input.from}'`, path);
       return undefined;
     }
     let target: Input | Output | undefined;
@@ -902,19 +1434,38 @@ class ProjectResolver {
         ? findById(localOutputs(targetContext), parsed.rest.at(-1)!)
         : undefined;
     }
-    if (target && targetContext === context && !localInputs(context).includes(target as Input)) {
-      this.error(context, "INVALID_FROM", `Input alias '${input.from}' cannot reference its own analysis output`);
+    let targetIsInOwnTree = false;
+    if (target && parsed.rest.length > 1) {
+      for (let current: LoadedAnalysis | undefined = targetContext; current; current = current.parent) {
+        if (current === context) {
+          targetIsInOwnTree = true;
+          break;
+        }
+      }
+    }
+    if (targetIsInOwnTree) {
+      this.error(
+        context,
+        "INVALID_FROM",
+        `Input alias '${input.from}' cannot reference an output in its own analysis tree`,
+        path,
+      );
       return undefined;
     }
     if (!target || !targetContext) {
-      this.error(context, "INVALID_FROM", `Input alias target '${input.from}' does not exist`);
+      this.error(
+        context,
+        "INVALID_FROM",
+        `Input alias target '${input.from}' does not exist`,
+        path,
+      );
       return undefined;
     }
     const targetIsInput = localInputs(targetContext).includes(target as Input);
     const resolved = targetIsInput && (target as Input).from
-      ? this.resolveInputAlias(targetContext, target as Input, chain)
+      ? this.resolveInputAlias(targetContext, target as Input)
       : !targetIsInput && (target as Output).from
-        ? this.resolveOutputAlias(targetContext, target as Output, chain)
+        ? this.resolveOutputAlias(targetContext, target as Output)
         : {
             context: targetContext,
             value: target,
@@ -924,26 +1475,21 @@ class ProjectResolver {
               target.id,
             ),
           };
-    if (resolved) this.inputAliases.set(input, resolved);
+    if (resolved) this.links.inputAliases.set(input, resolved);
     return resolved;
   }
 
   private resolveOutputAlias(
     context: LoadedAnalysis,
     output: Output,
-    chain = new Set<Input | Output>(),
   ): AliasResolution<Output> | undefined {
-    const cached = this.outputAliases.get(output);
+    const cached = this.links.outputAliases.get(output);
     if (cached) return cached;
-    if (chain.has(output)) {
-      this.error(context, "ALIAS_CYCLE", `Alias cycle at output '${output.id}'`);
-      return undefined;
-    }
-    chain.add(output);
+    const path = authoredPath(context, "outputs", output.id);
     const reference = output.from ?? "";
     const parts = reference.split(".");
     if (reference.startsWith("../") || parts.length < 2 || parts.some((part) => !ID_PATTERN.test(part))) {
-      this.error(context, "INVALID_OUTPUT_FROM", `Invalid output alias '${reference}'`);
+      this.error(context, "INVALID_OUTPUT_FROM", `Invalid output alias '${reference}'`, path);
       return undefined;
     }
     const targetContext = this.descend(context, parts.slice(0, -1));
@@ -951,7 +1497,12 @@ class ProjectResolver {
       ? findById(localOutputs(targetContext), parts.at(-1)!)
       : undefined;
     if (!target || !targetContext) {
-      this.error(context, "INVALID_OUTPUT_FROM", `Output alias target '${reference}' does not exist`);
+      this.error(
+        context,
+        "INVALID_OUTPUT_FROM",
+        `Output alias target '${reference}' does not exist`,
+        path,
+      );
       return undefined;
     }
     const immediate = {
@@ -960,7 +1511,7 @@ class ProjectResolver {
       canonicalPath: recordPath(targetContext, "outputs", target.id),
     };
     const ultimate = target.from
-      ? this.resolveOutputAlias(targetContext, target, chain)
+      ? this.resolveOutputAlias(targetContext, target)
       : immediate;
     const resolved = ultimate
       ? {
@@ -970,29 +1521,29 @@ class ProjectResolver {
           immediate,
         }
       : undefined;
-    if (resolved) this.outputAliases.set(output, resolved);
+    if (resolved) this.links.outputAliases.set(output, resolved);
     return resolved;
   }
 
   private resolveDecisionAlias(
     context: LoadedAnalysis,
     decision: Decision,
-    chain = new Set<Decision>(),
   ): AliasResolution<Decision> | undefined {
-    const cached = this.decisionAliases.get(decision);
+    const cached = this.links.decisionAliases.get(decision);
     if (cached) return cached;
-    if (chain.has(decision)) {
-      this.error(context, "ALIAS_CYCLE", `Alias cycle at decision '${decision.id}'`);
-      return undefined;
-    }
-    chain.add(decision);
+    const path = authoredPath(context, "decisions", decision.id);
     const parsed = parseUpwardReference(decision.from ?? "");
     let owner: LoadedAnalysis | undefined = context;
     if (parsed) for (let count = 0; count < parsed.up; count += 1) owner = owner?.parent;
     const targetId = parsed?.rest.length === 1 ? parsed.rest[0] : undefined;
     const target = owner && targetId ? localDecisions(owner)[targetId] : undefined;
     if (!parsed || !owner || !target) {
-      this.error(context, "INVALID_DECISION_FROM", `Decision alias target '${decision.from}' does not exist`);
+      this.error(
+        context,
+        "INVALID_DECISION_FROM",
+        `Decision alias target '${decision.from}' does not exist`,
+        path,
+      );
       return undefined;
     }
     const immediate = {
@@ -1001,7 +1552,7 @@ class ProjectResolver {
       canonicalPath: recordPath(owner, "decisions", targetId!),
     };
     const ultimate = target.from
-      ? this.resolveDecisionAlias(owner, target, chain)
+      ? this.resolveDecisionAlias(owner, target)
       : immediate;
     const resolved = ultimate
       ? {
@@ -1011,7 +1562,7 @@ class ProjectResolver {
           immediate,
         }
       : undefined;
-    if (resolved) this.decisionAliases.set(decision, resolved);
+    if (resolved) this.links.decisionAliases.set(decision, resolved);
     return resolved;
   }
 
@@ -1019,40 +1570,75 @@ class ProjectResolver {
     if (this.selectedMemo.has(decision)) return this.selectedMemo.get(decision);
     let selected: string | undefined;
     if (decision.from) {
-      const target = this.resolveDecisionAlias(context, decision);
+      const target = this.links.decisionAliases.get(decision);
       selected = target ? this.selectedOption(target.context, target.value) : undefined;
     } else {
-      const state = this.plan.states.get(context);
+      const state = this.configuration.states.get(context);
       selected = state?.mode === "defaults"
-        ? decision.default
-        : state && getDecisionSelections(state.data as unknown as Dict)[decision.id!];
+        ? this.defaultSelections(context)[decision.id!]
+        : state && decisionSelections(state.data)[decision.id!];
     }
     this.selectedMemo.set(decision, selected);
     return selected;
   }
 
+  private defaultSelections(context: LoadedAnalysis): Record<string, string> {
+    const cached = this.defaultSelectionsMemo.get(context);
+    if (cached) return cached;
+
+    const decisions = localDecisions(context);
+    let selected = emptyRecord<string>();
+    const seen = new Set<string>();
+    while (true) {
+      const stateKey = JSON.stringify(Object.entries(selected).sort(([left], [right]) =>
+        left.localeCompare(right)));
+      if (seen.has(stateKey)) {
+        this.error(
+          context,
+          "UNSTABLE_DEFAULT_SELECTIONS",
+          "Conditional decision defaults do not settle to a stable configuration",
+          authoredPath(context, "decisions"),
+        );
+        this.unstableDefaultContexts.add(context);
+        selected = emptyRecord<string>();
+        break;
+      }
+      seen.add(stateKey);
+
+      const next = emptyRecord<string>();
+      for (const [id, decision] of Object.entries(decisions)) {
+        if (decision.from || decision.default === undefined) continue;
+        const active = !decision.when?.length
+          || (this.links.conditions.get(decision) ?? []).every((condition) => {
+            const actual = condition.decision.from
+              ? this.selectedOption(context, condition.decision)
+              : selected[condition.decision.id!];
+            const matches = actual === condition.optionId;
+            return condition.negated ? !matches : matches;
+          });
+        if (active) next[id] = decision.default;
+      }
+      const nextKey = JSON.stringify(Object.entries(next).sort(([left], [right]) =>
+        left.localeCompare(right)));
+      if (nextKey === stateKey) {
+        selected = next;
+        break;
+      }
+      selected = next;
+    }
+    this.defaultSelectionsMemo.set(context, selected);
+    return selected;
+  }
+
   private conditionMet(
     context: LoadedAnalysis,
-    when: string[] | undefined,
-    path?: string,
+    owner: Decision | Output,
   ): boolean {
-    if (!when) return true;
+    if (!owner.when) return true;
     let active = true;
-    for (const condition of when) {
-      const negated = condition.startsWith("~");
-      const reference = negated ? condition.slice(1) : condition;
-      const parts = reference.split(".");
-      const decision = parts.length === 2 ? localDecisions(context)[parts[0]!] : undefined;
-      const effective = decision?.from
-        ? this.resolveDecisionAlias(context, decision)?.value
-        : decision;
-      if (!decision || !effective || !decisionOptions(effective)[parts[1]!]) {
-        this.error(context, "INVALID_CONDITION", `Condition '${condition}' does not resolve`, path);
-        active = false;
-        continue;
-      }
-      const matches = this.selectedOption(context, decision) === parts[1];
-      if (negated ? matches : !matches) active = false;
+    for (const condition of this.links.conditions.get(owner) ?? []) {
+      const matches = this.selectedOption(context, condition.decision) === condition.optionId;
+      if (condition.negated ? matches : !matches) active = false;
     }
     return active;
   }
@@ -1060,13 +1646,9 @@ class ProjectResolver {
   private decisionActive(context: LoadedAnalysis, decision: Decision): boolean {
     const cached = this.decisionActiveMemo.get(decision);
     if (cached !== undefined) return cached;
-    const own = this.conditionMet(
-      context,
-      decision.when,
-      authoredPath(context, "decisions", decision.id),
-    );
+    const own = this.conditionMet(context, decision);
     const target = decision.from
-      ? this.resolveDecisionAlias(context, decision)?.immediate
+      ? this.links.decisionAliases.get(decision)?.immediate
       : undefined;
     const active = own && (!target || this.decisionActive(target.context, target.value));
     this.decisionActiveMemo.set(decision, active);
@@ -1076,22 +1658,18 @@ class ProjectResolver {
   private outputActive(context: LoadedAnalysis, output: Output): boolean {
     const cached = this.outputActiveMemo.get(output);
     if (cached !== undefined) return cached;
-    const own = this.conditionMet(
-      context,
-      output.when,
-      authoredPath(context, "outputs", output.id),
-    );
+    const own = this.conditionMet(context, output);
     const target = output.from
-      ? this.resolveOutputAlias(context, output)?.immediate
+      ? this.links.outputAliases.get(output)?.immediate
       : undefined;
     const active = own && (!target || this.outputActive(target.context, target.value));
     this.outputActiveMemo.set(output, active);
     return active;
   }
 
-  private validateSelection(context: LoadedAnalysis): void {
-    const state = this.plan.states.get(context)!;
-    const selections = getDecisionSelections(state.data as unknown as Dict);
+  private validateSelectionReferences(context: LoadedAnalysis): void {
+    const state = this.configuration.states.get(context)!;
+    const selections = decisionSelections(state.data);
     const decisions = localDecisions(context);
     const selectionPath = (id: string): string =>
       [state.pathPrefix, "decisions", id].filter(Boolean).join(".");
@@ -1135,6 +1713,18 @@ class ProjectResolver {
         }
       }
     }
+  }
+
+  private validateSelection(context: LoadedAnalysis): void {
+    const state = this.configuration.states.get(context)!;
+    if (state.mode === "defaults") {
+      this.defaultSelections(context);
+      if (this.unstableDefaultContexts.has(context)) return;
+    }
+    const selections = decisionSelections(state.data);
+    const decisions = localDecisions(context);
+    const selectionPath = (id: string): string =>
+      [state.pathPrefix, "decisions", id].filter(Boolean).join(".");
     for (const [id, decision] of Object.entries(decisions)) {
       if (decision.from) continue;
       const active = this.decisionActive(context, decision);
@@ -1151,8 +1741,7 @@ class ProjectResolver {
           );
         }
         continue;
-      }
-      if (!selected) {
+      } else if (!selected) {
         this.error(
           context,
           "MISSING_DECISION_SELECTION",
@@ -1164,89 +1753,77 @@ class ProjectResolver {
             : decisionSelectionPath,
           state.mode === "defaults" ? context.file : state.file,
         );
-        continue;
       }
-      const option = decisionOptions(decision)[selected];
-      if (!option) {
-        this.error(
-          context,
-          "UNKNOWN_OPTION",
-          `Decision '${id}' has no option '${selected}'`,
-          decisionSelectionPath,
-          state.file,
-        );
-        continue;
-      }
-      if (option.excluded) {
-        this.error(
-          context,
-          "EXCLUDED_OPTION_SELECTED",
-          `Option '${id}.${selected}' is excluded`,
-          decisionSelectionPath,
-          state.file,
-        );
-      }
-    }
-    const effectiveSelections: Record<string, string> = {};
-    for (const [id, decision] of Object.entries(decisions)) {
-      const selected = this.selectedOption(context, decision);
-      if (selected) effectiveSelections[id] = selected;
-    }
-    for (const [id, decision] of Object.entries(decisions)) {
-      if (decision.from) continue;
-      const selected = effectiveSelections[id];
-      if (!selected) continue;
-      const option = decisionOptions(decision)[selected];
-      for (const reference of option?.incompatible_with ?? []) {
-        const [otherDecision, otherOption, extra] = reference.split(".");
-        if (extra !== undefined || !otherDecision || !otherOption) continue;
-        if (effectiveSelections[otherDecision] === otherOption) {
+      const option = selected ? decisionOptions(decision)[selected] : undefined;
+      if (!selected || !option) continue;
+      const constraints = this.links.optionConstraints.get(decision)?.get(selected);
+      const constraintPath = state.mode === "defaults"
+        ? authoredPath(context, "decisions", id)
+        : selectionPath(id);
+      const constraintFile = state.mode === "defaults" ? context.file : state.file;
+      for (const link of constraints?.incompatible ?? []) {
+        if (this.selectedOption(context, link.decision) === link.optionId) {
           this.error(
             context,
             "INCOMPATIBLE_OPTIONS",
-            `Option '${id}.${selected}' is incompatible with '${reference}'`,
-            selectionPath(id),
-            state.file,
+            `Option '${id}.${selected}' is incompatible with '${link.reference}'`,
+            constraintPath,
+            constraintFile,
           );
         }
       }
-      for (const reference of option?.requires ?? []) {
-        const [otherDecision, otherOption, extra] = reference.split(".");
-        if (extra !== undefined || !otherDecision || !otherOption) continue;
-        if (effectiveSelections[otherDecision] !== otherOption) {
+      for (const link of constraints?.required ?? []) {
+        if (this.selectedOption(context, link.decision) !== link.optionId) {
           this.error(
             context,
             "MISSING_REQUIRED_OPTION",
-            `Option '${id}.${selected}' requires '${reference}'`,
-            selectionPath(id),
-            state.file,
+            `Option '${id}.${selected}' requires '${link.reference}'`,
+            constraintPath,
+            constraintFile,
           );
         }
       }
     }
   }
 
-  private resolveOutputProvenance(
+  private linkOutputProvenance(
     context: LoadedAnalysis,
     output: Output,
-  ): { inputPaths: string[]; decisionPaths: string[] } {
+  ): OutputProvenance {
     const inputPaths: string[] = [];
     for (const id of output.inputs ?? []) {
       const input = findById(localInputs(context), id);
       const siblingOutput = findById(localOutputs(context), id);
-      if (input) {
-        const target = input.from ? this.resolveInputAlias(context, input) : undefined;
-        inputPaths.push(target?.canonicalPath ?? recordPath(context, "inputs", id));
-      } else if (siblingOutput) {
-        const target = siblingOutput.from ? this.resolveOutputAlias(context, siblingOutput) : undefined;
+      // Match the canonical resolver: a sibling output wins an ambiguous ID.
+      if (siblingOutput) {
+        const target = siblingOutput.from
+          ? this.links.outputAliases.get(siblingOutput)
+            ?? this.resolveOutputAlias(context, siblingOutput)
+          : undefined;
         inputPaths.push(target?.canonicalPath ?? recordPath(context, "outputs", id));
+      } else if (input) {
+        const target = input.from
+          ? this.links.inputAliases.get(input) ?? this.resolveInputAlias(context, input)
+          : undefined;
+        inputPaths.push(target?.canonicalPath ?? recordPath(context, "inputs", id));
       } else {
-        this.error(
-          context,
-          "UNKNOWN_OUTPUT_INPUT",
-          `Output '${output.id}' references unknown input '${id}'`,
-          authoredPath(context, "outputs", output.id),
-        );
+        const parts = id.split(".");
+        const child = parts.length === 2 ? context.childById.get(parts[0]!) : undefined;
+        const childOutput = child ? findById(localOutputs(child), parts[1]!) : undefined;
+        if (child && childOutput) {
+          const target = childOutput.from
+            ? this.links.outputAliases.get(childOutput)
+              ?? this.resolveOutputAlias(child, childOutput)
+            : undefined;
+          inputPaths.push(target?.canonicalPath ?? recordPath(child, "outputs", childOutput.id));
+        } else {
+          this.error(
+            context,
+            "INVALID_OUTPUT_INPUT",
+            `Output input '${id}' is not a declared analysis input or sibling output`,
+            `${authoredPath(context, "outputs", output.id)}.inputs`,
+          );
+        }
       }
     }
     const decisionPaths: string[] = [];
@@ -1255,54 +1832,50 @@ class ProjectResolver {
       if (!decision) {
         this.error(
           context,
-          "UNKNOWN_OUTPUT_DECISION",
-          `Output '${output.id}' references unknown decision '${id}'`,
-          authoredPath(context, "outputs", output.id),
+          "INVALID_OUTPUT_DECISION",
+          `Output decision '${id}' is not a decision in scope`,
+          `${authoredPath(context, "outputs", output.id)}.decisions`,
         );
       } else {
-        const target = decision.from ? this.resolveDecisionAlias(context, decision) : undefined;
+        const target = decision.from
+          ? this.links.decisionAliases.get(decision)
+            ?? this.resolveDecisionAlias(context, decision)
+          : undefined;
         decisionPaths.push(target?.canonicalPath ?? recordPath(context, "decisions", id));
       }
     }
-    return { inputPaths, decisionPaths };
+    const provenance = { inputPaths, decisionPaths };
+    this.links.outputProvenance.set(output, provenance);
+    return provenance;
   }
 
   private validateInsights(context: LoadedAnalysis): void {
-    for (const decision of Object.values(localDecisions(context))) {
-      const target = decision.from ? this.resolveDecisionAlias(context, decision) : undefined;
-      if (target) continue;
-      for (const [optionId, option] of Object.entries(decisionOptions(decision))) {
-        for (const insightId of option.insights ?? []) {
-          if (!localInsights(context, "prior_insights")[insightId]) {
-            this.error(
-              context,
-              "INVALID_INSIGHT_REF",
-              `Option '${optionId}' references unknown prior insight '${insightId}'`,
-            );
-          }
-        }
-      }
-    }
     for (const collection of ["prior_insights", "findings"] as const) {
       for (const [id, insight] of Object.entries(localInsights(context, collection))) {
-        insight.evidence.forEach((evidence, index) => {
-          if (evidence.artifact && !findById(localOutputs(context), evidence.artifact)) {
-            this.error(
-              context,
-              "INVALID_ARTIFACT_REF",
-              `Evidence references unknown output '${evidence.artifact}'`,
-              `${authoredPath(context, collection, id)}.evidence.${index}.artifact`,
-            );
-          }
-        });
+        const evidencePaths = (Array.isArray(insight.evidence) ? insight.evidence : [])
+          .map((evidence, index): string | undefined => {
+            if (evidence.artifact === undefined) return undefined;
+            const output = findById(localOutputs(context), evidence.artifact);
+            if (!output) {
+              this.error(
+                context,
+                "INVALID_ARTIFACT_REF",
+                `Evidence artifact '${evidence.artifact}' not found in declared outputs`,
+                `${authoredPath(context, collection, id)}.evidence[${index}].artifact`,
+              );
+              return undefined;
+            }
+            return recordPath(context, "outputs", output.id);
+          });
+        this.links.insightEvidencePaths.set(insight, evidencePaths);
       }
     }
   }
 
   private validateArtifactPaths(): void {
     const seen = new Map<string, string>();
-    for (const context of this.plan.states.keys()) {
-      const universeId = this.plan.states.get(context)!.effectiveUniverseId;
+    for (const context of this.configuration.states.keys()) {
+      const universeId = this.configuration.states.get(context)!.effectiveUniverseId;
       for (const output of localOutputs(context)) {
         if (output.from || !output.format) continue;
         const name = `${[...context.artifactPrefix, output.id].join(".")}.${output.format}`;
@@ -1329,8 +1902,8 @@ class ProjectResolver {
     }
   }
 
-  project(): ResolvedAnalysisNode {
-    return this.projectAnalysis(this.root);
+  project(): ResolvedRootAnalysis {
+    return this.projectAnalysis(this.root) as ResolvedRootAnalysis;
   }
 
   private projectAnalysis(context: LoadedAnalysis): ResolvedAnalysisNode {
@@ -1353,15 +1926,15 @@ class ProjectResolver {
       decisions: Object.entries(localDecisions(context)).map(([id, decision]) =>
         this.projectDecision(context, id, decision)),
       prior_insights: Object.entries(localInsights(context, "prior_insights")).map(([id, insight]) =>
-        this.projectInsight(context, "prior_insight", { ...insight, id })),
+        this.projectInsight(context, "prior_insight", id, insight)),
       findings: Object.entries(localInsights(context, "findings")).map(([id, insight]) =>
-        this.projectInsight(context, "finding", { ...insight, id })),
+        this.projectInsight(context, "finding", id, insight)),
       analyses: context.children.map((child) => this.projectAnalysis(child) as ResolvedAnalysisNode & { id: string }),
     };
   }
 
   private projectInput(context: LoadedAnalysis, input: Input): ResolvedInput {
-    const target = input.from ? this.resolveInputAlias(context, input)! : undefined;
+    const target = input.from ? this.links.inputAliases.get(input)! : undefined;
     if (!target) {
       return {
         ...input,
@@ -1395,9 +1968,8 @@ class ProjectResolver {
   }
 
   private projectOutput(context: LoadedAnalysis, output: Output): ResolvedOutput {
-    const target = output.from ? this.resolveOutputAlias(context, output)! : undefined;
+    const target = output.from ? this.links.outputAliases.get(output)! : undefined;
     const source = target?.value ?? output;
-    const sourceContext = target?.context ?? context;
     const {
       id: _sourceId,
       from: _sourceFrom,
@@ -1414,7 +1986,7 @@ class ProjectResolver {
       type: source.type!,
       active: this.outputActive(context, output),
       ...(target ? { resolvedFrom: target.canonicalPath } : {}),
-      provenance: this.resolveOutputProvenance(sourceContext, source),
+      provenance: this.links.outputProvenance.get(source)!,
     };
     return projected;
   }
@@ -1424,9 +1996,8 @@ class ProjectResolver {
     id: string,
     decision: Decision,
   ): ResolvedDecision {
-    const target = decision.from ? this.resolveDecisionAlias(context, decision)! : undefined;
+    const target = decision.from ? this.links.decisionAliases.get(decision)! : undefined;
     const source = target?.value ?? decision;
-    const sourceContext = target?.context ?? context;
     const {
       id: _sourceId,
       from: _sourceFrom,
@@ -1435,7 +2006,7 @@ class ProjectResolver {
       ...sourceContent
     } = source;
     const options = Object.entries(decisionOptions(source)).map(([id, option]) =>
-      this.projectOption(sourceContext, id, option));
+      this.projectOption(source, id, option));
     const selectedOptionId = this.selectedOption(context, decision);
     return {
       ...sourceContent,
@@ -1453,43 +2024,45 @@ class ProjectResolver {
   }
 
   private projectOption(
-    context: LoadedAnalysis,
+    decision: Decision,
     id: string,
     option: Option,
   ): ResolvedOption {
     return {
       ...option,
       id,
-      resolvedInsightPaths: (option.insights ?? []).map((insightId) =>
-        recordPath(context, "prior_insights", insightId)),
+      resolvedInsightPaths: this.links.optionInsightPaths.get(decision)?.get(id) ?? [],
     };
   }
 
   private projectInsight(
     context: LoadedAnalysis,
     kind: "finding" | "prior_insight",
+    id: string,
     insight: Insight,
   ): ResolvedInsight {
     const collection = kind === "finding" ? "findings" : "prior_insights";
+    const evidencePaths = this.links.insightEvidencePaths.get(insight) ?? [];
     return {
       ...insight,
-      canonicalPath: recordPath(context, collection, insight.id),
+      id,
+      canonicalPath: recordPath(context, collection, id),
       kind,
-      evidence: insight.evidence.map((evidence): ResolvedEvidence => ({
+      evidence: insight.evidence.map((evidence, index): ResolvedEvidence => ({
         ...evidence,
-        ...(evidence.artifact
-          ? { resolvedOutputPath: recordPath(context, "outputs", evidence.artifact) }
+        ...(evidencePaths[index]
+          ? { resolvedOutputPath: evidencePaths[index] }
           : {}),
       })),
     };
   }
 
   artifactPath(context: LoadedAnalysis, output: Output): string | undefined {
-    const target = output.from ? this.resolveOutputAlias(context, output) : undefined;
+    const target = output.from ? this.links.outputAliases.get(output) : undefined;
     const source = target?.value ?? output;
     const owner = target?.context ?? context;
     if (!source.format) return undefined;
-    const state = this.plan.states.get(owner);
+    const state = this.configuration.states.get(owner);
     if (!state) return undefined;
     const filename = `${[...owner.artifactPrefix, source.id].join(".")}.${source.format}`;
     return normalizedJoin(owner.directory, "results", state.effectiveUniverseId, filename);
@@ -1501,14 +2074,24 @@ async function sha256CacheToken(
   modifiedAtMs: number,
   byteSize: number,
 ): Promise<string> {
-  const encoder = new TextEncoder();
-  const digest = await globalThis.crypto.subtle.digest(
-    "SHA-256",
-    encoder.encode(`${path}\0${modifiedAtMs}\0${byteSize}`),
-  );
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  try {
+    if (!globalThis.crypto?.subtle) throw new Error("Web Crypto is unavailable");
+    const encoder = new TextEncoder();
+    const digest = await globalThis.crypto.subtle.digest(
+      "SHA-256",
+      encoder.encode(`${path}\0${modifiedAtMs}\0${byteSize}`),
+    );
+    return [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  } catch (error) {
+    throw new ProjectLoadError(
+      "READ_FAILED",
+      `Could not compute a cache token for ${path}: ${causeMessage(error)}`,
+      path,
+      error,
+    );
+  }
 }
 
 function walkLoaded(root: LoadedAnalysis): LoadedAnalysis[] {
@@ -1525,7 +2108,7 @@ async function bindArtifacts(
   reader: ProjectReader,
   root: LoadedAnalysis,
   projected: ResolvedAnalysisNode,
-  resolver: ProjectResolver,
+  resolver: ProjectCompiler,
 ): Promise<ArtifactBinding[]> {
   const bindings: ArtifactBinding[] = [];
   const outputByPath = new Map<string, ResolvedOutput>();
@@ -1565,11 +2148,26 @@ async function bindArtifacts(
   return bindings;
 }
 
-/** Load, validate, and resolve one ASTRA project through a host adapter. */
-export async function resolveAnalysis(
+interface InvalidProjectCompilation {
+  valid: false;
+  issues: ValidationIssue[];
+}
+
+interface ValidProjectCompilation {
+  valid: true;
+  root: LoadedAnalysis;
+  issues: ValidationIssue[];
+  selected?: LoadedUniverse;
+  source: "explicit" | "implicit" | "none";
+  resolver: ProjectCompiler;
+}
+
+type ProjectCompilation = InvalidProjectCompilation | ValidProjectCompilation;
+
+async function compileAnalysisProject(
   reader: ProjectReader,
-  options: ResolveOptions = {},
-): Promise<ResolvedAnalysisBundle> {
+  options: ResolveAnalysisOptions = {},
+): Promise<ProjectCompilation> {
   const issues: ValidationIssue[] = [];
   const root = await loadAnalysisFile(reader, "astra.yaml", issues, {
     canonicalSegments: [],
@@ -1579,49 +2177,89 @@ export async function resolveAnalysis(
     ancestry: new Set<string>(),
   });
   validateMapAgreements(root, issues);
-  await validateLoadedStructures(root, issues, options.schema);
-  try {
-    validateLoadedSemantics(root, issues);
-  } catch (error) {
-    // Semantic validation expects structurally valid input. Preserve all
-    // structural issues when malformed values make that pass inapplicable.
-    if (!issues.length) throw error;
-  }
-  if (issues.length) throw new AnalysisValidationError(issues);
+  await validateLoadedStructures(root, issues);
+  const links = createProjectLinks();
+  const linker = new ProjectCompiler(root, undefined, issues, links);
+  linker.validateProject();
+  if (issues.length) return { valid: false, issues };
 
   let selected: LoadedUniverse | undefined;
   let source: "explicit" | "implicit" | "none";
   if (options.universeId !== undefined) {
     selected = root.universeById.get(options.universeId);
-    if (!selected) {
-      throw new ResolveAnalysisError(
-        "UNIVERSE_NOT_FOUND",
-        `Root universe '${options.universeId}' does not exist`,
-        normalizedJoin("universes", `${options.universeId}.yaml`),
-      );
-    }
     source = "explicit";
   } else {
     selected = root.universes[0];
     source = selected ? "implicit" : "none";
   }
 
-  // Validate every authored universe, not just the selected configuration.
-  let selectedResolver: ProjectResolver | undefined;
-  for (const context of walkLoaded(root)) {
+  // A nested universe has no ancestor selections when it is not referenced by
+  // a root configuration. Its names, option references, child links, and
+  // deterministic artifact paths can still be validated independently.
+  for (const context of walkLoaded(root).slice(1)) {
     for (const universe of context.universes) {
+      if (!universe.valid) continue;
       const plan = buildSelectionPlan(context, universe.data, universe.file, universe.id, issues);
-      const resolver = new ProjectResolver(context, plan, issues);
-      resolver.validate();
-      if (universe === selected) selectedResolver = resolver;
+      new ProjectCompiler(context, plan, issues, links).validateUniverseReferences();
     }
   }
-  if (!selectedResolver) {
-    const plan = buildSelectionPlan(root, undefined, "astra.yaml", "default", issues);
-    selectedResolver = new ProjectResolver(root, plan, issues);
-    selectedResolver.validate();
+
+  // Evaluate every root configuration. Referenced nested universes are folded
+  // into these plans with their ancestor selections intact. An unreferenced
+  // nested universe has no meaningful ancestor configuration, so its activity,
+  // required selections, and constraints are checked only when referenced.
+  let selectedResolver: ProjectCompiler | undefined;
+  for (const universe of root.universes) {
+    if (!universe.valid) continue;
+    const plan = buildSelectionPlan(root, universe.data, universe.file, universe.id, issues);
+    const resolver = new ProjectCompiler(root, plan, issues, links);
+    resolver.validateConfiguration();
+    if (universe === selected) selectedResolver = resolver;
   }
-  if (issues.length) throw new AnalysisValidationError(issues);
+  if (!root.universes.length) {
+    const plan = buildSelectionPlan(root, undefined, "astra.yaml", "default", issues);
+    selectedResolver = new ProjectCompiler(root, plan, issues, links);
+    selectedResolver.validateConfiguration();
+  }
+  if (issues.length) return { valid: false, issues };
+  if (options.universeId !== undefined && !selected) {
+    throw new ProjectLoadError(
+      "UNIVERSE_NOT_FOUND",
+      `Root universe '${options.universeId}' does not exist`,
+      normalizedJoin("universes", `${options.universeId}.yaml`),
+    );
+  }
+  if (!selectedResolver) {
+    throw new ProjectLoadError(
+      "UNIVERSE_NOT_FOUND",
+      "No resolvable root universe was found",
+      "universes",
+    );
+  }
+  return { valid: true, root, issues, selected, source, resolver: selectedResolver };
+}
+
+/** Validate one complete ASTRA project through a host adapter. */
+export async function validateAnalysis(
+  reader: ProjectReader,
+): Promise<AnalysisValidationResult> {
+  const compiled = await compileAnalysisProject(reader);
+  return { valid: compiled.valid, issues: compiled.issues };
+}
+
+/** Load, validate, and resolve one ASTRA project through a host adapter. */
+export async function resolveAnalysis(
+  reader: ProjectReader,
+  options: ResolveAnalysisOptions = {},
+): Promise<ResolvedAnalysisBundle> {
+  const compiled = await compileAnalysisProject(reader, options);
+  if (!compiled.valid) throw new AnalysisValidationError(compiled.issues);
+  const {
+    root,
+    selected,
+    source,
+    resolver: selectedResolver,
+  } = compiled;
 
   const analysis = selectedResolver.project();
   const bindings = await bindArtifacts(reader, root, analysis, selectedResolver);

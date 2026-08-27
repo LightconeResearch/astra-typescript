@@ -1,29 +1,21 @@
-// Structural (JSON Schema) validation. The SDK's supported schema is bundled;
-// consumers can explicitly load a remote schema or pass one directly.
+// Internal structural validation against the exact schema bundled with this SDK.
 
 import Ajv2019 from "ajv/dist/2019.js";
 import type { ErrorObject, ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 
 import {
-  type JsonSchema,
-  type SchemaLoadOptions,
-  loadAstraSchema,
-} from "../schema/index.js";
-import {
-  injectAnalysisIdsInPlace,
-  injectUniverseIdsInPlace,
-} from "../helpers.js";
+  injectAnalysisTreeIds,
+  injectUniverseTreeIds,
+} from "../authored-ids.js";
+import { bundledAstraSchema } from "../schema/bundled.js";
 
-export interface ValidateOptions extends SchemaLoadOptions {
-  /** Pre-loaded schema. Wins over any loader options. */
-  schema?: JsonSchema;
-}
+type Dict = Record<string, unknown>;
 
 export interface SchemaValidationIssue {
-  code: string;
-  message: string;
-  path?: string;
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string;
 }
 
 interface CompiledValidators {
@@ -31,35 +23,21 @@ interface CompiledValidators {
   universe: ValidateFunction;
 }
 
-const _compiledCache = new WeakMap<JsonSchema, CompiledValidators>();
+let compiledValidators: CompiledValidators | undefined;
 
-function compileFor(schema: JsonSchema): CompiledValidators {
-  const cached = _compiledCache.get(schema);
-  if (cached) return cached;
+function validators(): CompiledValidators {
+  if (compiledValidators) return compiledValidators;
 
-  // The published spec uses JSON Schema draft 2019-09.
   const ajv = new Ajv2019({ allErrors: true, strict: false, allowUnionTypes: true });
   addFormats(ajv);
-
-  const analysis = ajv.compile(schema);
-
-  // Wrap to validate against `#/$defs/Universe`. Don't spread the root —
-  // its top-level Analysis keywords would still apply alongside `$ref`.
-  const universeWrapper: Record<string, unknown> = {
-    $schema: schema.$schema,
-    $defs: schema.$defs,
+  const analysis = ajv.compile(bundledAstraSchema);
+  const universe = ajv.compile({
+    $schema: bundledAstraSchema.$schema as string | undefined,
+    $defs: bundledAstraSchema.$defs,
     $ref: "#/$defs/Universe",
-  };
-  const universe = ajv.compile(universeWrapper);
-
-  const compiled = { analysis, universe };
-  _compiledCache.set(schema, compiled);
-  return compiled;
-}
-
-async function resolveSchema(opts: ValidateOptions): Promise<JsonSchema> {
-  if (opts.schema) return opts.schema;
-  return loadAstraSchema(opts);
+  });
+  compiledValidators = { analysis, universe };
+  return compiledValidators;
 }
 
 function ajvErrorPath(error: ErrorObject): string | undefined {
@@ -76,9 +54,7 @@ function ajvErrorPath(error: ErrorObject): string | undefined {
   return segments.length ? segments.join(".") : undefined;
 }
 
-function structuredErrors(
-  validator: ValidateFunction,
-): SchemaValidationIssue[] {
+function structuredErrors(validator: ValidateFunction): SchemaValidationIssue[] {
   return (validator.errors ?? []).map((error) => {
     const path = ajvErrorPath(error);
     return {
@@ -89,48 +65,17 @@ function structuredErrors(
   });
 }
 
-export async function validateAnalysisStructure(
-  data: Record<string, unknown>,
-  opts: ValidateOptions = {},
-): Promise<SchemaValidationIssue[]> {
-  const schema = await resolveSchema(opts);
-  const { analysis } = compileFor(schema);
+export function validateAnalysisStructure(data: Dict): SchemaValidationIssue[] {
   const prepared = structuredClone(data);
   if (prepared.id == null) prepared.id = "root";
-  injectAnalysisIdsInPlace(prepared);
+  injectAnalysisTreeIds(prepared);
+  const { analysis } = validators();
   return analysis(prepared) ? [] : structuredErrors(analysis);
 }
 
-export async function validateUniverseStructure(
-  data: Record<string, unknown>,
-  opts: ValidateOptions = {},
-): Promise<SchemaValidationIssue[]> {
-  const schema = await resolveSchema(opts);
-  const { universe } = compileFor(schema);
+export function validateUniverseStructure(data: Dict): SchemaValidationIssue[] {
   const prepared = structuredClone(data);
-  injectUniverseIdsInPlace(prepared);
+  injectUniverseTreeIds(prepared);
+  const { universe } = validators();
   return universe(prepared) ? [] : structuredErrors(universe);
 }
-
-/** Validate an Analysis dict against the JSON Schema. Returns error strings
- *  (empty when valid). The bundled schema is used unless overridden. */
-export async function validateAnalysisData(
-  data: Record<string, unknown>,
-  opts: ValidateOptions = {},
-): Promise<string[]> {
-  const issues = await validateAnalysisStructure(data, opts);
-  return issues.map((issue) =>
-    issue.path ? `${issue.path}: ${issue.message}` : `(root): ${issue.message}`);
-}
-
-export async function validateUniverseData(
-  data: Record<string, unknown>,
-  opts: ValidateOptions = {},
-): Promise<string[]> {
-  const issues = await validateUniverseStructure(data, opts);
-  return issues.map((issue) =>
-    issue.path ? `${issue.path}: ${issue.message}` : `(root): ${issue.message}`);
-}
-
-// Re-export for convenience so callers don't need to import from two paths.
-export { astraSchemaUrl, loadAstraSchema } from "../schema/index.js";

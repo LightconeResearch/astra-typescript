@@ -104,7 +104,8 @@ export interface Decision {
   rationale?: string;
   tags?: string[];
   default?: string;
-  options?: Record<string, Option>;
+  /** A string value is shorthand for an option whose label is that string. */
+  options?: Record<string, Option | string>;
   from?: string;
   when?: string[];
 }
@@ -125,16 +126,22 @@ export interface Analysis {
   analyses?: Record<string, Analysis>;
 }
 
+export interface DecisionSelection {
+  /** Optional because the surrounding map key identifies the decision. */
+  decision_id?: string | null;
+  option_id: string;
+}
+
 export interface UniverseNode {
   id?: string;
-  universe?: string;
-  decisions?: Record<string, string>;
+  universe?: string | null;
+  decisions?: Record<string, string | DecisionSelection>;
   analyses?: Record<string, UniverseNode>;
 }
 
 export interface Universe {
   id: string;
   description?: string;
-  decisions?: Record<string, string>;
+  decisions?: Record<string, string | DecisionSelection>;
   analyses?: Record<string, UniverseNode>;
 }

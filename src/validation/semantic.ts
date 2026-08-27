@@ -1,15 +1,13 @@
-import { dirname } from "node:path";
-
 import {
   type Dict,
   asArray,
   asDict,
   collectNodeDecisions,
+  getDecisionOptions,
+  getDecisionSelections,
   getInputIds,
   getOutputIds,
   isConditionMet,
-  loadYaml,
-  resolveAnalysisTree,
 } from "../helpers.js";
 import type { Analysis } from "../types.js";
 
@@ -26,6 +24,26 @@ export class SemanticError {
 }
 
 const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/** Validate fields required of every physical astra.yaml root. */
+export function validateAnalysisRootFields(
+  data: Analysis | Dict,
+): SemanticError[] {
+  const working = data as Dict;
+  const errors: SemanticError[] = [];
+  for (const field of ["version", "name", "inputs", "outputs"]) {
+    if (working[field] == null) {
+      errors.push(
+        new SemanticError(
+          "MISSING_ROOT_FIELD",
+          `Root analysis is missing required field '${field}'`,
+          field,
+        ),
+      );
+    }
+  }
+  return errors;
+}
 
 /** Parse a `../scope.id` style path. Returns null on malformed input. */
 function parseFromPath(ref: string): { up: number; segments: string[] } | null {
@@ -68,29 +86,14 @@ function checkPathExclusivity(data: Dict, errors: SemanticError[], pathPrefix = 
 /** Validate an Analysis dict semantically. Returns the list of errors. */
 export function validateAnalysis(
   data: Analysis | Dict,
-  options: { basePath?: string } = {},
 ): SemanticError[] {
   const errors: SemanticError[] = [];
-  let working = data as Dict;
+  const working = data as Dict;
 
   // Run before any external `path:` resolution merges over content fields.
   checkPathExclusivity(working, errors);
 
-  if (options.basePath) {
-    working = resolveAnalysisTree(working, options.basePath);
-  }
-
-  for (const field of ["version", "name", "inputs", "outputs"]) {
-    if (working[field] == null) {
-      errors.push(
-        new SemanticError(
-          "MISSING_ROOT_FIELD",
-          `Root analysis is missing required field '${field}'`,
-          field,
-        ),
-      );
-    }
-  }
+  errors.push(...validateAnalysisRootFields(working));
 
   const inputs = asArray<Dict>(working.inputs);
   const outputs = asArray<Dict>(working.outputs);
@@ -115,7 +118,7 @@ export function validateAnalysis(
   }
 
   const rootDecisions = collectNodeDecisions(working) as unknown as Record<string, Dict>;
-  errors.push(..._validateDecisions(rootDecisions, priorInsights as Dict, ""));
+  errors.push(..._validateDecisions(asDict(working.decisions) ?? {}, priorInsights as Dict, ""));
 
   errors.push(
     ..._validateInsightArtifacts(asDict(working.prior_insights) ?? {}, outputIds, "", "prior_insights"),
@@ -223,24 +226,23 @@ function _validateAnalysisNode(
   const priorInsights = asDict(node.prior_insights) ?? {};
 
   // Build the constraint scope: locally-defined decisions plus any `from:`
-  // alias resolved one ancestor up (matches the Python constraint_scope).
+  // alias resolved through its full ancestor chain.
   const constraintScope: Record<string, Dict> = { ...nodeDecisions };
-  for (const [decisionId, decision] of Object.entries(allDecisions)) {
-    const ref = decision?.from as string | undefined;
-    if (!ref) continue;
-    const parsed = parseFromPath(ref);
-    if (!parsed || parsed.up <= 0 || parsed.segments.length !== 1) continue;
-    const targetScope = _resolveAncestorScope(ancestorChain, parsed.up);
-    if (!targetScope) continue;
-    const targetDecisions = (asDict(targetScope.decisions) ?? {}) as Record<string, Dict>;
-    const seg = parsed.segments[0]!;
-    if (seg in targetDecisions) {
-      const tgt = targetDecisions[seg];
-      if (tgt) constraintScope[decisionId] = tgt;
-    }
+  const scopeChain = [...ancestorChain, node];
+  for (const [decisionId, rawDecision] of Object.entries(allDecisions)) {
+    const decision = asDict(rawDecision);
+    if (!decision?.from) continue;
+    const target = _resolveDecisionDefinition(
+      decision,
+      scopeChain,
+      scopeChain.length - 1,
+    );
+    if (target) constraintScope[decisionId] = target;
   }
 
-  errors.push(..._validateDecisions(nodeDecisions, priorInsights, nodePath, constraintScope));
+  errors.push(
+    ..._validateDecisions(asDict(node.decisions) ?? {}, priorInsights, nodePath, constraintScope),
+  );
 
   errors.push(
     ..._validateInsightArtifacts(
@@ -338,18 +340,35 @@ function _validateInsightArtifacts(
 }
 
 function _validateDecisions(
-  decisions: Record<string, Dict>,
+  decisions: Record<string, unknown>,
   priorInsights: Dict,
   pathPrefix: string,
   constraintScope?: Record<string, Dict>,
 ): SemanticError[] {
   const errors: SemanticError[] = [];
-  const scope = constraintScope ?? decisions;
+  const localScope: Record<string, Dict> = {};
+  for (const [id, raw] of Object.entries(decisions)) {
+    const decision = asDict(raw);
+    if (decision && !decision.from) localScope[id] = decision;
+  }
+  const scope = constraintScope ?? localScope;
   const decisionsPrefix = pathPrefix ? `${pathPrefix}.decisions` : "decisions";
 
-  for (const [decisionId, decision] of Object.entries(decisions)) {
+  for (const [decisionId, rawDecision] of Object.entries(decisions)) {
     const decisionPath = `${decisionsPrefix}.${decisionId}`;
-    const options = (asDict(decision.options) ?? {}) as Record<string, Dict>;
+    const decision = asDict(rawDecision);
+    if (!decision) {
+      errors.push(
+        new SemanticError(
+          "MISSING_DECISION_DEFINITION",
+          `Decision '${decisionId}' has no definition`,
+          decisionPath,
+        ),
+      );
+      continue;
+    }
+    if (decision.from) continue;
+    const options = getDecisionOptions(decision);
 
     const defaultOpt = decision.default as string | undefined;
     if (defaultOpt != null && !(defaultOpt in options)) {
@@ -364,7 +383,7 @@ function _validateDecisions(
 
     errors.push(
       ..._validateWhenRefs(decision.when, {
-        decisions: { ...scope, ...decisions },
+        decisions: scope,
         path: decisionPath,
         ownerKind: "Decision",
         forbidSelfRef: decisionId,
@@ -495,7 +514,7 @@ function _validateWhenRefs(
         ),
       );
     } else {
-      const refOptions = asDict(referenced.options) ?? {};
+      const refOptions = getDecisionOptions(referenced);
       if (!(optionId in refOptions)) {
         const subject = ctx.ownerKind === "Output" ? `${ctx.ownerKind} 'when'` : "'when'";
         errors.push(
@@ -748,6 +767,26 @@ function _resolveAncestorScope(chain: Dict[], up: number): Dict | null {
   return chain[chain.length - up] ?? null;
 }
 
+function _resolveDecisionDefinition(
+  decision: Dict,
+  scopeChain: Dict[],
+  scopeIndex: number,
+): Dict | undefined {
+  const ref = decision.from;
+  if (typeof ref !== "string") return decision;
+  const parsed = parseFromPath(ref);
+  if (!parsed || parsed.up <= 0 || parsed.segments.length !== 1) return undefined;
+  const targetIndex = scopeIndex - parsed.up;
+  if (targetIndex < 0) return undefined;
+  const targetScope = scopeChain[targetIndex];
+  const target = targetScope
+    ? asDict(asDict(targetScope.decisions)?.[parsed.segments[0]!])
+    : undefined;
+  return target
+    ? _resolveDecisionDefinition(target, scopeChain, targetIndex)
+    : undefined;
+}
+
 function _validateDecisionFrom(
   ref: string,
   ancestorChain: Dict[],
@@ -880,7 +919,7 @@ function _validateConstraintRef(
       ),
     ];
   }
-  const options = (asDict(decisions[decisionId]!.options) ?? {}) as Record<string, Dict>;
+  const options = getDecisionOptions(decisions[decisionId]!);
   if (!(optionId in options)) {
     return [
       new SemanticError(
@@ -910,7 +949,7 @@ function _validateUniverseNode(
 
   const analysisDecisions = collectNodeDecisions(analysisNode) as Record<string, Dict>;
   const allAnalysisDecisions = (asDict(analysisNode.decisions) ?? {}) as Record<string, Dict>;
-  const universeDecisions = (asDict(universeNode.decisions) ?? {}) as Record<string, string>;
+  const universeDecisions = getDecisionSelections(universeNode);
   const decisionsPath = pathPrefix ? `${pathPrefix}.decisions` : "decisions";
 
   const fromDecisionIds = new Set<string>();
@@ -940,7 +979,7 @@ function _validateUniverseNode(
       continue;
     }
     const decision = analysisDecisions[decisionId]!;
-    const options = (asDict(decision.options) ?? {}) as Record<string, Dict>;
+    const options = getDecisionOptions(decision);
     if (!(optionId in options)) {
       errors.push(
         new SemanticError(
@@ -1008,8 +1047,16 @@ function _validateUniverseNode(
 
   errors.push(..._validateNodeUniverseConstraints(effective, analysisDecisions, decisionsPath));
 
-  const analysisSub = (asDict(analysisNode.analyses) ?? {}) as Record<string, Dict>;
-  const universeSub = (asDict(universeNode.analyses) ?? {}) as Record<string, Dict>;
+  const analysisSub: Record<string, Dict> = {};
+  for (const [id, raw] of Object.entries(asDict(analysisNode.analyses) ?? {})) {
+    const child = asDict(raw);
+    if (child) analysisSub[id] = child;
+  }
+  const universeSub: Record<string, Dict> = {};
+  for (const [id, raw] of Object.entries(asDict(universeNode.analyses) ?? {})) {
+    const child = asDict(raw);
+    if (child) universeSub[id] = child;
+  }
   const analysesPrefix = pathPrefix ? `${pathPrefix}.analyses` : "analyses";
 
   for (const analysisId of Object.keys(universeSub)) {
@@ -1048,7 +1095,7 @@ function _validateNodeUniverseConstraints(
   for (const [decisionId, optionId] of Object.entries(universeDecisions)) {
     const decision = analysisDecisions[decisionId];
     if (!decision) continue;
-    const options = (asDict(decision.options) ?? {}) as Record<string, Dict>;
+    const options = getDecisionOptions(decision);
     const option = options[optionId];
     if (!option) continue;
     const path = `${pathPrefix}.${decisionId}`;
@@ -1080,15 +1127,4 @@ function _validateNodeUniverseConstraints(
     }
   }
   return errors;
-}
-
-export function semanticValidateAnalysisFile(filePath: string): SemanticError[] {
-  return validateAnalysis(loadYaml(filePath), { basePath: dirname(filePath) });
-}
-
-export function semanticValidateUniverseFile(
-  universePath: string,
-  analysisPath: string,
-): SemanticError[] {
-  return validateUniverse(loadYaml(universePath), loadYaml(analysisPath));
 }

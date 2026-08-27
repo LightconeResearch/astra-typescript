@@ -1,18 +1,15 @@
 export {
   validateAnalysisData,
   validateUniverseData,
-  validateAnalysisFile,
-  validateUniverseFile,
-  isValidAnalysis,
-  isValidUniverse,
+  validateAnalysisStructure,
+  validateUniverseStructure,
+  type SchemaValidationIssue,
 } from "./schema.js";
 
 export {
   SemanticError,
   validateAnalysis,
   validateUniverse,
-  semanticValidateAnalysisFile,
-  semanticValidateUniverseFile,
 } from "./semantic.js";
 
 export {

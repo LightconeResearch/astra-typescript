@@ -1,6 +1,7 @@
 export type {
   Analysis,
   Decision,
+  DecisionSelection,
   Evidence,
   FragmentSelector,
   Input,
@@ -17,11 +18,9 @@ export type {
 } from "./types.js";
 
 export {
-  loadYaml,
   parseYamlString,
   isConditionMet,
   collectNodeDecisions,
-  resolveAnalysisTree,
   injectAnalysisIdsInPlace,
   injectUniverseIdsInPlace,
   getInputIds,
@@ -31,15 +30,12 @@ export {
 export {
   validateAnalysisData,
   validateUniverseData,
-  validateAnalysisFile,
-  validateUniverseFile,
-  isValidAnalysis,
-  isValidUniverse,
+  validateAnalysisStructure,
+  validateUniverseStructure,
+  type SchemaValidationIssue,
   SemanticError,
   validateAnalysis,
   validateUniverse,
-  semanticValidateAnalysisFile,
-  semanticValidateUniverseFile,
   RECOMMENDED_UNTIL,
   collectRecommendations,
 } from "./validation/index.js";
@@ -48,10 +44,26 @@ export {
   type JsonSchema,
   type SchemaLoadOptions,
   ASTRA_SPEC_HOST,
+  ASTRA_SPEC_VERSION,
   astraSchemaUrl,
   loadAstraSchema,
   setAstraSchema,
   clearAstraSchemaCache,
 } from "./schema/index.js";
 
-export * from "./view-model/index.js";
+export type {
+  ProjectReader,
+  ProjectEntry,
+  ProjectDirectoryEntry,
+} from "./project-reader.js";
+export {
+  ProjectPathError,
+  assertProjectPath,
+  joinProjectPath,
+  projectDirname,
+} from "./project-reader.js";
+
+export * from "./resolved-types.js";
+export * from "./resolve.js";
+export * from "./index-analysis.js";
+export * from "./citations.js";

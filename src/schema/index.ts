@@ -1,113 +1,79 @@
-// Schema loader. The package no longer bundles the JSON Schema —
-// instead we fetch the frozen, versioned artifact from astra-spec.org
-// (cached in memory, with an optional on-disk cache for repeat runs).
+// Browser-safe ASTRA schema loader. The SDK's supported schema is bundled so
+// ordinary parsing and resolution are deterministic and work offline. Explicit
+// historical/latest URLs are fetched and cached in memory.
 
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  BUNDLED_ASTRA_SPEC_VERSION,
+  bundledAstraSchema,
+} from "./bundled.js";
 
 export type JsonSchema = Record<string, unknown>;
 
 export interface SchemaLoadOptions {
-  /** Version segment in the URL path. Defaults to "latest". */
+  /** Explicit remote version segment. Omit to use the bundled schema. */
   version?: string;
-  /** Explicit URL override. Wins over `version`. Supports `https://` and `file://`. */
+  /** Explicit fetchable URL override. Wins over `version`. */
   url?: string;
-  /**
-   * Directory used as the on-disk cache. Set to `null` (or `false`) to
-   * disable disk caching entirely. Defaults to `<tmpdir>/astra-schema-cache`.
-   */
-  cacheDir?: string | null | false;
-  /** Bypass both in-memory and on-disk caches and fetch fresh. */
+  /** Bypass the in-memory cache for an explicit remote source. */
   force?: boolean;
 }
 
-const _memoryCache = new Map<string, JsonSchema>();
+const memoryCache = new Map<string, JsonSchema>();
+const BUNDLED_CACHE_KEY = `bundled:${BUNDLED_ASTRA_SPEC_VERSION}`;
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+const immutableBundledSchema = deepFreeze(bundledAstraSchema);
 
 export const ASTRA_SPEC_HOST = "https://astra-spec.org";
+/** The astra-spec release whose schema is bundled with this SDK. */
+export const ASTRA_SPEC_VERSION = BUNDLED_ASTRA_SPEC_VERSION;
 
-/** Build the canonical schema URL for a given version. */
-export function astraSchemaUrl(version = "latest"): string {
+export function astraSchemaUrl(version: string = ASTRA_SPEC_VERSION): string {
   return `${ASTRA_SPEC_HOST}/${version}/schema/astra.schema.json`;
 }
 
-function defaultCacheDir(): string {
-  return join(tmpdir(), "astra-schema-cache");
-}
-
-function cacheFileFor(url: string, dir: string): string {
-  const hash = createHash("sha256").update(url).digest("hex").slice(0, 16);
-  return join(dir, `${hash}.json`);
-}
-
-async function readUrl(url: string): Promise<JsonSchema> {
-  if (url.startsWith("file://")) {
-    const text = readFileSync(fileURLToPath(url), "utf8");
-    return JSON.parse(text) as JsonSchema;
+export async function loadAstraSchema(
+  options: SchemaLoadOptions = {},
+): Promise<JsonSchema> {
+  if (options.url === undefined && options.version === undefined) {
+    const installed = memoryCache.get(BUNDLED_CACHE_KEY);
+    if (installed) return installed;
+    memoryCache.set(BUNDLED_CACHE_KEY, immutableBundledSchema);
+    return immutableBundledSchema;
   }
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ASTRA schema from ${url}: HTTP ${res.status}`);
-  }
-  return (await res.json()) as JsonSchema;
-}
 
-/**
- * Load the ASTRA JSON Schema. Default source is
- * `https://astra-spec.org/latest/schema/astra.schema.json`.
- *
- * Subsequent calls with the same URL hit an in-memory cache. With disk
- * caching enabled (the default), the schema is also persisted under
- * `<tmpdir>/astra-schema-cache` so future processes don't have to refetch.
- */
-export async function loadAstraSchema(opts: SchemaLoadOptions = {}): Promise<JsonSchema> {
-  const url = opts.url ?? astraSchemaUrl(opts.version ?? "latest");
-
-  if (!opts.force) {
-    const cached = _memoryCache.get(url);
+  const url = options.url ?? astraSchemaUrl(options.version);
+  if (!options.force) {
+    const cached = memoryCache.get(url);
     if (cached) return cached;
   }
-
-  const useDisk = opts.cacheDir !== null && opts.cacheDir !== false;
-  const cacheDir = typeof opts.cacheDir === "string" ? opts.cacheDir : defaultCacheDir();
-  const cachePath = useDisk ? cacheFileFor(url, cacheDir) : null;
-
-  if (cachePath && !opts.force) {
-    try {
-      const text = readFileSync(cachePath, "utf8");
-      const schema = JSON.parse(text) as JsonSchema;
-      _memoryCache.set(url, schema);
-      return schema;
-    } catch {
-      // Fall through to network fetch.
-    }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ASTRA schema from ${url}: HTTP ${response.status}`);
   }
-
-  const schema = await readUrl(url);
-  _memoryCache.set(url, schema);
-
-  if (cachePath) {
-    try {
-      mkdirSync(cacheDir, { recursive: true });
-      writeFileSync(cachePath, JSON.stringify(schema));
-    } catch {
-      // Best-effort cache; ignore write failures.
-    }
-  }
-
+  const schema = await response.json() as JsonSchema;
+  memoryCache.set(url, schema);
   return schema;
 }
 
-/** Install a pre-loaded schema in the in-memory cache. Useful for tests
- *  and for environments where the consumer prefers to manage fetching. */
-export function setAstraSchema(schema: JsonSchema, opts: { url?: string; version?: string } = {}): void {
-  const url = opts.url ?? astraSchemaUrl(opts.version ?? "latest");
-  _memoryCache.set(url, schema);
+export function setAstraSchema(
+  schema: JsonSchema,
+  options: { url?: string; version?: string } = {},
+): void {
+  const key = options.url
+    ?? (options.version === undefined
+      ? BUNDLED_CACHE_KEY
+      : astraSchemaUrl(options.version));
+  memoryCache.set(key, schema);
 }
 
-/** Drop all cached schemas from memory. */
 export function clearAstraSchemaCache(): void {
-  _memoryCache.clear();
+  memoryCache.clear();
 }

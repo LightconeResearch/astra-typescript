@@ -1,5 +1,5 @@
 id: photoz_pipeline
-version: "1.0"
+version: "0.0.14"
 name: Photometric Redshift Pipeline
 tags:
   - photometric-redshifts

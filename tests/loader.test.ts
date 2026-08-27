@@ -1,10 +1,7 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, existsSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ASTRA_SPEC_VERSION,
   astraSchemaUrl,
   clearAstraSchemaCache,
   loadAstraSchema,
@@ -12,10 +9,14 @@ import {
 } from "../src/schema/index.js";
 
 beforeEach(() => clearAstraSchemaCache());
+afterEach(() => vi.restoreAllMocks());
 
 describe("astraSchemaUrl", () => {
-  it("defaults to /latest/ on astra-spec.org", () => {
-    expect(astraSchemaUrl()).toBe("https://astra-spec.org/latest/schema/astra.schema.json");
+  it("defaults to the schema version supported by the SDK", () => {
+    expect(ASTRA_SPEC_VERSION).toBe("0.0.14");
+    expect(astraSchemaUrl()).toBe(
+      "https://astra-spec.org/0.0.14/schema/astra.schema.json",
+    );
   });
 
   it("builds versioned URLs", () => {
@@ -24,43 +25,52 @@ describe("astraSchemaUrl", () => {
 });
 
 describe("loadAstraSchema", () => {
-  it("loads from a file:// URL", async () => {
-    // Write a minimal schema stub to a temp file and load it. This
-    // exercises the file:// branch without requiring any external fetch.
-    const dir = mkdtempSync(join(tmpdir(), "astra-schema-stub-"));
-    const path = join(dir, "schema.json");
-    writeFileSync(path, JSON.stringify({ $defs: { Analysis: {}, Universe: {} } }));
-    const url = pathToFileURL(path).href;
+  it("loads the supported schema offline by default", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const schema = await loadAstraSchema();
+    expect(schema.version).toBe(ASTRA_SPEC_VERSION);
+    expect(fetch).not.toHaveBeenCalled();
+  });
 
-    const schema = await loadAstraSchema({ url, cacheDir: false });
+  it("does not expose a mutable bundled schema singleton", async () => {
+    const schema = await loadAstraSchema();
+    expect(Object.isFrozen(schema)).toBe(true);
+    expect(Object.isFrozen(schema.$defs)).toBe(true);
+    expect(() => {
+      schema.version = "poisoned";
+    }).toThrow(TypeError);
+
+    clearAstraSchemaCache();
+    expect((await loadAstraSchema()).version).toBe(ASTRA_SPEC_VERSION);
+  });
+
+  it("loads from a fetchable URL without Node filesystem APIs", async () => {
+    const body = JSON.stringify({ $defs: { Analysis: {}, Universe: {} } });
+    const url = `data:application/json,${encodeURIComponent(body)}`;
+    const schema = await loadAstraSchema({ url });
     expect(schema).toHaveProperty("$defs");
     expect((schema as { $defs: Record<string, unknown> }).$defs).toHaveProperty("Analysis");
   });
 
-  it("writes a disk cache entry and reuses it", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "astra-schema-stub-"));
-    const path = join(dir, "schema.json");
-    writeFileSync(path, JSON.stringify({ $defs: { Analysis: {}, Universe: {} } }));
-    const url = pathToFileURL(path).href;
-
-    const cacheDir = mkdtempSync(join(tmpdir(), "astra-schema-cache-test-"));
-    await loadAstraSchema({ url, cacheDir });
-    expect(existsSync(cacheDir)).toBe(true);
-    expect(readdirSync(cacheDir).length).toBe(1);
-
-    // After clearing the in-memory cache, a second call still succeeds
-    // because the disk cache satisfies it.
-    clearAstraSchemaCache();
-    const schema = await loadAstraSchema({ url, cacheDir });
-    expect(schema).toHaveProperty("$defs");
+  it("reuses its browser-safe in-memory cache", async () => {
+    const url = `data:application/json,${encodeURIComponent(JSON.stringify({ title: "schema" }))}`;
+    const first = await loadAstraSchema({ url });
+    const second = await loadAstraSchema({ url });
+    expect(second).toBe(first);
   });
 });
 
 describe("setAstraSchema", () => {
   it("makes a pre-loaded schema available without fetching", async () => {
     const stub = { $defs: { Analysis: {}, Universe: {} } } as Record<string, unknown>;
-    setAstraSchema(stub, { version: "latest" });
-    const loaded = await loadAstraSchema(); // no url, no version → "latest"
+    setAstraSchema(stub);
+    const loaded = await loadAstraSchema();
     expect(loaded).toBe(stub);
+  });
+
+  it("retains a default override when force has no remote source", async () => {
+    const stub = { $defs: { Analysis: {}, Universe: {} } } as Record<string, unknown>;
+    setAstraSchema(stub);
+    expect(await loadAstraSchema({ force: true })).toBe(stub);
   });
 });

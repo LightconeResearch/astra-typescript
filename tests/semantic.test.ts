@@ -2,33 +2,32 @@ import { describe, expect, it } from "vitest";
 
 import {
   validateAnalysis,
-  semanticValidateAnalysisFile,
   validateUniverse,
   SemanticError,
 } from "../src/validation/semantic.js";
-import { loadYaml } from "../src/helpers.js";
+import { loadYaml } from "../src/node.js";
 import { FIXTURES } from "./setup.js";
 
 const codes = (errs: SemanticError[]): string[] => errs.map((e) => e.code);
 
 describe("semantic validation: valid fixtures pass cleanly", () => {
   it("Analysis-001 has no semantic errors", () => {
-    expect(semanticValidateAnalysisFile(FIXTURES.validAnalysis)).toEqual([]);
+    expect(validateAnalysis(loadYaml(FIXTURES.validAnalysis))).toEqual([]);
   });
 
   it("iris example has no semantic errors", () => {
-    expect(semanticValidateAnalysisFile(FIXTURES.irisAnalysis)).toEqual([]);
+    expect(validateAnalysis(loadYaml(FIXTURES.irisAnalysis))).toEqual([]);
   });
 
   it("iris_pipeline example has no semantic errors", () => {
-    expect(semanticValidateAnalysisFile(FIXTURES.irisPipelineAnalysis)).toEqual([]);
+    expect(validateAnalysis(loadYaml(FIXTURES.irisPipelineAnalysis))).toEqual([]);
   });
 });
 
 describe("semantic validation: targeted negative cases", () => {
   it("flags duplicate input IDs", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [
         { id: "a", type: "data" },
@@ -41,7 +40,7 @@ describe("semantic validation: targeted negative cases", () => {
 
   it("flags an invalid default option", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [{ id: "a", type: "data" }],
       outputs: [{ id: "out", type: "metric" }],
@@ -52,9 +51,25 @@ describe("semantic validation: targeted negative cases", () => {
     expect(codes(errors)).toContain("INVALID_DEFAULT");
   });
 
+  it("reports a missing decision definition without throwing", () => {
+    const errors = validateAnalysis({
+      version: "0.0.14",
+      name: "x",
+      inputs: [],
+      outputs: [],
+      decisions: { missing: null },
+    });
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "MISSING_DECISION_DEFINITION",
+        path: "decisions.missing",
+      }),
+    ]));
+  });
+
   it("flags an unknown command-template input", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [{ id: "a", type: "data" }],
       outputs: [
@@ -71,7 +86,7 @@ describe("semantic validation: targeted negative cases", () => {
 
   it("detects output dependency cycles", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [],
       outputs: [
@@ -84,7 +99,7 @@ describe("semantic validation: targeted negative cases", () => {
 
   it("rejects Decision.from with descent segments", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [{ id: "a", type: "data" }],
       outputs: [{ id: "o", type: "metric" }],
@@ -102,7 +117,7 @@ describe("semantic validation: targeted negative cases", () => {
 
   it("validates child decision citations against child-local prior insights", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [],
       outputs: [],
@@ -127,7 +142,7 @@ describe("semantic validation: targeted negative cases", () => {
 
   it("does not resolve child decision citations from root prior insights", () => {
     const errors = validateAnalysis({
-      version: "1.0",
+      version: "0.0.14",
       name: "x",
       inputs: [],
       outputs: [],
@@ -161,5 +176,25 @@ describe("universe validation", () => {
     const universe = { id: "u", decisions: { not_a_decision: "x" } };
     const errors = validateUniverse(universe, loadYaml(FIXTURES.irisAnalysis));
     expect(codes(errors)).toContain("UNKNOWN_DECISION");
+  });
+
+  it("accepts scalar option labels and verbose selections", () => {
+    const analysis = {
+      version: "0.0.14",
+      name: "x",
+      inputs: [],
+      outputs: [],
+      decisions: {
+        mode: { label: "Mode", options: { on: "Enabled" } },
+      },
+    };
+    const universe = { id: "u", decisions: { mode: { option_id: "on" } } };
+    expect(validateUniverse(universe, analysis)).toEqual([]);
+  });
+
+  it("treats null analysis-map entries as absent", () => {
+    const analysis = { analyses: { unused: null } };
+    const universe = { analyses: { unused: null } };
+    expect(validateUniverse(universe, analysis)).toEqual([]);
   });
 });

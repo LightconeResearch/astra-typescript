@@ -3,10 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { collectRecommendations, validateAnalysis } from "../src/index.js";
+import {
+  collectRecommendations,
+  resolveAnalysis,
+  validateAnalysis,
+} from "../src/index.js";
+import { createNodeProjectReader } from "../src/node.js";
 
 const analysis = (outputs: unknown[], extra: Record<string, unknown> = {}) => ({
-  version: "1.0",
+  version: "0.0.14",
   name: "Recommendations",
   inputs: [{ id: "catalog", type: "data", source: "data/catalog.csv" }],
   outputs,
@@ -56,19 +61,31 @@ describe("collectRecommendations", () => {
   });
 
   it("reaches outputs in a sub-analysis referenced by path", async () => {
-    // Without `basePath` the sub is an unresolved stub with no outputs, and a
-    // project that has none would be reported as having nothing to fix.
     const root = await mkdtemp(join(tmpdir(), "astra-recommendations-"));
     try {
       await mkdir(join(root, "sub"));
       await writeFile(
         join(root, "sub", "astra.yaml"),
-        "version: \"1.0\"\nname: Sub\ninputs: []\noutputs:\n  - id: result\n    type: metric\n",
+        "version: \"0.0.14\"\nname: Sub\ninputs: []\noutputs:\n  - id: result\n    type: metric\n",
       );
       const data = analysis([], { analyses: { child: { path: "sub" } } });
+      await writeFile(
+        join(root, "astra.yaml"),
+        [
+          'version: "0.0.14"',
+          "name: Recommendations",
+          "inputs: []",
+          "outputs: []",
+          "analyses:",
+          "  child:",
+          "    path: sub",
+          "",
+        ].join("\n"),
+      );
 
       expect(collectRecommendations(data)).toEqual([]);
-      const messages = collectRecommendations(data, { basePath: root });
+      const bundle = await resolveAnalysis(createNodeProjectReader(root));
+      const messages = collectRecommendations(bundle.document.analysis);
       expect(messages).toHaveLength(1);
       expect(messages[0]).toContain("child.result");
     } finally {

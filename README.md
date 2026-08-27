@@ -39,24 +39,27 @@ Invalid projects reject with `AnalysisValidationError`; loading and storage
 failures reject with `ResolveAnalysisError`. A missing output artifact is not an
 error: the output simply has no `artifact` descriptor or binding.
 
-### Deterministic artifact paths
+### Optional indexes
 
-The resolver computes artifact paths directly and never scans result folders:
+The resolved bundle contains no lookup maps. Build them only when needed:
 
-```text
-results/<universe-id>/<output-id>.<format>
-results/<universe-id>/<inline-child>.<output-id>.<format>
+```ts
+import { indexAnalysis } from "@astra-spec/sdk";
+
+const index = indexAnalysis(bundle.document);
+const output = index.recordByPath.get("stage.outputs.figure");
 ```
 
-Nested inline analysis ids continue the dotted prefix. A child loaded through
-`Analysis.path` starts a new result namespace beside its own `astra.yaml`.
-Output aliases bind to their ultimate target file rather than creating a copy.
+Normalized cited DOI lists are also derived rather than duplicated in the
+resolved bundle:
 
-Each available binding includes an opaque SHA-256 `cacheToken` derived from its
-path, modification time, and byte size. Hosts can use it to invalidate stable
-serving URLs without reading artifact bytes.
+```ts
+import { collectCitedDois } from "@astra-spec/sdk";
 
-## Other hosts
+const citedDois = collectCitedDois(bundle.document);
+```
+
+### Other hosts
 
 An integration implements this contract around its native storage API:
 
@@ -108,38 +111,6 @@ schema into `resolveAnalysis(reader, { schema })` or `setAstraSchema()`.
 `collectRecommendations()` reports advisory fields such as an omitted output
 format. For a multi-file project, pass `bundle.document.analysis` from
 `resolveAnalysis()`, which owns recursive loading.
-
-## Optional indexes
-
-The resolved bundle contains no lookup maps. Build them only when needed:
-
-```ts
-import { indexAnalysis } from "@astra-spec/sdk";
-
-const index = indexAnalysis(bundle.document);
-const output = index.recordByPath.get("stage.outputs.figure");
-```
-
-Normalized cited DOI lists are also derived rather than duplicated in the
-resolved bundle:
-
-```ts
-import { collectCitedDois } from "@astra-spec/sdk";
-
-const citedDois = collectCitedDois(bundle.document);
-```
-
-## Development
-
-```bash
-npm install
-npm test
-npm run typecheck
-npm run build
-```
-
-The test suite exercises the bundled canonical schema and does not require a
-sibling `astra-spec` checkout or network access.
 
 ## License
 

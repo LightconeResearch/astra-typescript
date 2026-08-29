@@ -63,6 +63,16 @@ The Node adapter is a separate entry point:
 | `ArtifactDescriptor` | interface | Materialized artifact metadata attached to a resolved output. |
 | `ArtifactBinding` | interface | Output-to-file binding with its opaque cache token. |
 
+## Resolved bundle decoding
+
+| Export | Kind | Purpose |
+| --- | --- | --- |
+| `isResolvedAnalysisBundle` | function | Type guard for an already-deserialized resolved bundle. |
+| `parseResolvedAnalysisBundle` | function | Return a valid transported bundle unchanged or throw structured diagnostics. |
+| `ResolvedAnalysisBundleValidationError` | class | Error containing all structural issues found while decoding a bundle. |
+| `ResolvedAnalysisBundleValidationIssue` | interface | One decoder issue with a stable code, JavaScript-style path, and message. |
+| `ResolvedAnalysisBundleValidationIssueCode` | type | Union of decoder issue codes. |
+
 ## Derived helpers
 
 | Export | Kind | Purpose |

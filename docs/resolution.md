@@ -71,6 +71,44 @@ The root analysis path is `$`; child analyses use dotted IDs such as `stage`
 and `stage.leaf`. Record paths include their collection, for example
 `outputs.figure` and `stage.outputs.plot`.
 
+## Decode a transported bundle
+
+A `ResolvedAnalysisBundle` produced in the same TypeScript process already has
+the SDK type. Once a bundle crosses a JSON, structured-clone, storage, message,
+or API boundary, treat it as `unknown` and restore that guarantee with the
+runtime decoder:
+
+```ts
+import {
+  parseResolvedAnalysisBundle,
+  ResolvedAnalysisBundleValidationError,
+} from "@astra-spec/sdk";
+
+const candidate: unknown = JSON.parse(serializedBundle);
+
+try {
+  const bundle = parseResolvedAnalysisBundle(candidate);
+  render(bundle.document, bundle.bindings);
+} catch (error) {
+  if (error instanceof ResolvedAnalysisBundleValidationError) {
+    for (const issue of error.issues) {
+      console.error(`${issue.path}: ${issue.message}`);
+    }
+  }
+}
+```
+
+For branch-based control flow, `isResolvedAnalysisBundle(candidate)` provides a
+boolean TypeScript type guard instead.
+
+`parseResolvedAnalysisBundle()` validates already-deserialized data; it is not
+an alias for `JSON.parse`. It checks the complete known resolved shape and the
+current `RESOLVED_ANALYSIS_SCHEMA_VERSION`, returns the original object without
+cloning it, and performs no project I/O, reference checking, or semantic
+resolution. It rejects non-finite numeric fields and negative artifact byte
+sizes so accepted values remain safe to transport. Additional unknown fields
+remain intact and do not invalidate the bundle.
+
 ## Deterministic artifact paths
 
 Artifact locations are derived directly; the resolver never scans `results/`.

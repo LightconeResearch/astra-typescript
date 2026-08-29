@@ -34,6 +34,7 @@ export {
 } from "./project-reader.js";
 
 export * from "./resolved-types.js";
+export * from "./parse-resolved-analysis.js";
 export * from "./resolve.js";
 export * from "./index-analysis.js";
 export * from "./citations.js";

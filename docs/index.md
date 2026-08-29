@@ -39,6 +39,23 @@ console.log(bundle.bindings);
 `resolveAnalysis()` performs complete validation itself. Do not validate first
 unless you specifically need the non-throwing validation result.
 
+## Receiving a resolved bundle
+
+If another process or service produced the resolved bundle, validate the
+already-deserialized transport value before using it:
+
+```ts
+import { parseResolvedAnalysisBundle } from "@astra-spec/sdk";
+
+const candidate: unknown = JSON.parse(serializedBundle);
+const bundle = parseResolvedAnalysisBundle(candidate);
+```
+
+The decoder returns the same object with the `ResolvedAnalysisBundle` type. It
+does not read or resolve a project. See
+[Resolve an ASTRA project](resolution.md#decode-a-transported-bundle) for
+diagnostics and the non-throwing type guard.
+
 !!! info "Authoring ASTRA"
 
     This site documents the TypeScript SDK. The canonical schema and authoring

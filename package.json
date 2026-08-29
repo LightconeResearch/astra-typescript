@@ -1,6 +1,6 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "TypeScript SDK for validating ASTRA projects and opening them as resolved data.",
   "type": "module",
   "license": "BSD-3-Clause",
@@ -12,11 +12,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./node": {
       "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
+      "import": "./dist/node.js",
+      "default": "./dist/node.js"
     }
   },
   "files": [

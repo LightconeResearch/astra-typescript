@@ -110,6 +110,49 @@ same shape returned by `validateAnalysis()`. Loading and storage failures reject
 with `ProjectLoadError`; so does an explicitly requested root universe that does
 not exist.
 
+### Decode a transported bundle
+
+TypeScript types do not validate data received through JSON, structured clone,
+storage, or an API. Use the SDK's runtime decoder at that boundary before
+passing a resolved bundle to a viewer or integration:
+
+```ts
+import {
+  parseResolvedAnalysisBundle,
+  ResolvedAnalysisBundleValidationError,
+} from "@astra-spec/sdk";
+
+const candidate: unknown = JSON.parse(serializedBundle);
+
+try {
+  const bundle = parseResolvedAnalysisBundle(candidate);
+  render(bundle.document, bundle.bindings);
+} catch (error) {
+  if (error instanceof ResolvedAnalysisBundleValidationError) {
+    console.error(error.issues);
+  }
+}
+```
+
+Alternatively, when diagnostics are not needed, use the boolean type guard:
+
+```ts
+import { isResolvedAnalysisBundle } from "@astra-spec/sdk";
+
+if (isResolvedAnalysisBundle(candidate)) {
+  render(candidate.document, candidate.bindings);
+}
+```
+
+Despite its name, `parseResolvedAnalysisBundle()` does not call `JSON.parse`.
+It accepts an already-deserialized `unknown`, checks the complete known shape
+and current resolved schema version, and returns the original object unchanged.
+It performs no project I/O, reference checking, or semantic resolution. It
+rejects non-finite numeric fields and negative artifact byte sizes so accepted
+values remain safe to transport. Unknown additional fields are retained and
+ignored so producers can add metadata without breaking consumers of the
+current contract.
+
 ### Derived lookups
 
 The resolved document contains no lookup maps. Build them only when needed:
@@ -228,6 +271,16 @@ The Node adapter is a separate entry point:
 | `OutputProvenance` | interface | Canonical input and decision dependencies of an output. |
 | `ArtifactDescriptor` | interface | Materialized artifact metadata attached to a resolved output. |
 | `ArtifactBinding` | interface | Output-to-file binding with its opaque cache token. |
+
+### Resolved bundle decoding
+
+| Export | Kind | Purpose |
+| --- | --- | --- |
+| `isResolvedAnalysisBundle` | function | Type guard for an already-deserialized resolved bundle. |
+| `parseResolvedAnalysisBundle` | function | Return a valid transported bundle unchanged or throw structured diagnostics. |
+| `ResolvedAnalysisBundleValidationError` | class | Error containing all structural issues found while decoding a bundle. |
+| `ResolvedAnalysisBundleValidationIssue` | interface | One decoder issue with a stable code, JavaScript-style path, and message. |
+| `ResolvedAnalysisBundleValidationIssueCode` | type | Union of decoder issue codes. |
 
 ### Derived helpers
 

@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  isResolvedAnalysisBundle,
   indexAnalysis,
-  walkAnalyses,
+  parseResolvedAnalysisBundle,
   resolveAnalysis,
   ProjectLoadError,
+  walkAnalyses,
   type ProjectReader,
   type ResolvedOutput,
 } from "../src/index.js";
@@ -118,6 +120,10 @@ describe("resolveAnalysis", () => {
 
     const bundle = await resolveAnalysis(createNodeProjectReader(root));
     const document = bundle.document;
+
+    expect(isResolvedAnalysisBundle(bundle)).toBe(true);
+    const transported: unknown = JSON.parse(JSON.stringify(bundle));
+    expect(parseResolvedAnalysisBundle(transported)).toEqual(bundle);
 
     expect(document.schemaVersion).toBe("astra-resolved-analysis.v1");
     expect(document.analysis.version).toBe("0.0.14");

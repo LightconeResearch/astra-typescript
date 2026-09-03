@@ -37,6 +37,16 @@ first universe filename in lexical order is selected implicitly. When no
 universe files exist, authored defaults are used and the resolved universe ID
 is `default`.
 
+A path-backed sub-analysis is a project of its own, and the same rule applies
+to it. A universe node may select one of the sub-analysis's universes by name
+(`analyses.<id>.universe: <name>`) or configure it inline with `decisions:` /
+`analyses:`. When neither is given — the node is absent or empty, or the root
+has no universe files at all — the sub-analysis keeps its own implicit
+selection: the first universe filename beside its `astra.yaml` in lexical
+order, falling back to its authored defaults under the ancestor's universe ID
+when it has none. Its artifacts resolve under that universe, which is where
+its own runs wrote them.
+
 The resolved document records the selection and all available root universe
 IDs:
 

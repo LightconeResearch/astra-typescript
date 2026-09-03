@@ -399,6 +399,88 @@ analyses:
     ]);
   });
 
+  it("falls back to a path-backed analysis's own first universe when unconfigured", async () => {
+    // An umbrella that only aliases a sub-analysis's outputs, with no
+    // universes/ of its own: the child was materialized under its own
+    // universe, and its artifacts must bind there.
+    await writeFile(
+      join(root, "astra.yaml"),
+      `version: "0.0.14"
+name: Umbrella
+inputs: []
+outputs:
+  - id: exported
+    from: child.plot
+analyses:
+  child:
+    path: packages/child
+`,
+    );
+    const childRoot = join(root, "packages", "child");
+    await mkdir(join(childRoot, "universes"), { recursive: true });
+    await writeFile(
+      join(childRoot, "astra.yaml"),
+      `id: child
+version: "0.0.14"
+name: Child
+inputs: []
+outputs:
+  - id: plot
+    type: figure
+    format: png
+    decisions: [style]
+decisions:
+  style:
+    label: Style
+    default: plain
+    options:
+      plain:
+        label: Plain
+      alternate:
+        label: Alternate
+`,
+    );
+    await writeFile(
+      join(childRoot, "universes", "baseline.yaml"),
+      "id: baseline\ndecisions:\n  style: alternate\n",
+    );
+    await writeFile(
+      join(childRoot, "universes", "other.yaml"),
+      "id: other\ndecisions:\n  style: plain\n",
+    );
+    await mkdir(join(childRoot, "results", "baseline"), { recursive: true });
+    await writeFile(join(childRoot, "results", "baseline", "plot.png"), "png");
+    await mkdir(join(childRoot, "results", "default"), { recursive: true });
+    await writeFile(join(childRoot, "results", "default", "plot.png"), "stray");
+
+    const bundle = await resolveAnalysis(createNodeProjectReader(root));
+    expect(bundle.document.universe).toMatchObject({ universeId: "default", source: "none" });
+    const child = bundle.document.analysis.analyses[0]!;
+    expect(child.decisions[0]!.selectedOptionId).toBe("alternate");
+    expect(bundle.bindings.map(({ outputPath, path }) => [outputPath, path])).toEqual([
+      ["outputs.exported", "packages/child/results/baseline/plot.png"],
+      ["child.outputs.plot", "packages/child/results/baseline/plot.png"],
+    ]);
+
+    // A root universe that names the child without configuring it defers the
+    // same way; one that configures it inline does not.
+    await writeUniverse("main", "id: main\nanalyses:\n  child: {}\n");
+    const named = await resolveAnalysis(createNodeProjectReader(root));
+    expect(named.bindings.map((binding) => binding.path)).toEqual([
+      "packages/child/results/baseline/plot.png",
+      "packages/child/results/baseline/plot.png",
+    ]);
+    await mkdir(join(childRoot, "results", "main"), { recursive: true });
+    await writeFile(join(childRoot, "results", "main", "plot.png"), "png");
+    await writeUniverse("main", "id: main\nanalyses:\n  child:\n    decisions:\n      style: plain\n");
+    const inline = await resolveAnalysis(createNodeProjectReader(root));
+    expect(inline.document.analysis.analyses[0]!.decisions[0]!.selectedOptionId).toBe("plain");
+    expect(inline.bindings.map((binding) => binding.path)).toEqual([
+      "packages/child/results/main/plot.png",
+      "packages/child/results/main/plot.png",
+    ]);
+  });
+
   it("treats a null child universe reference as absent", async () => {
     await writeFile(join(root, "astra.yaml"), NESTED_ANALYSIS);
     await writeUniverse(

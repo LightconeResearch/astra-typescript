@@ -717,6 +717,10 @@ async function validateLoadedStructures(
   }
 }
 
+function isEmptySelection(node: UniverseNode): boolean {
+  return node.universe === undefined && node.decisions == null && node.analyses == null;
+}
+
 function universeChild(data: Universe | UniverseNode, id: string): UniverseNode {
   const analyses = asDict(data.analyses);
   if (!analyses || !Object.hasOwn(analyses, id)) return {};
@@ -796,6 +800,14 @@ function buildSelectionPlan(
           continue;
         }
         visit(child, named.data, named.file, "", "universe", named.id);
+      } else if (child.pathBacked && isEmptySelection(childSelection) && child.universes[0]) {
+        // A path-backed analysis is a project of its own. When nothing here
+        // configures it, it keeps its own implicit selection — the first
+        // universe beside its astra.yaml, the same rule a root follows — so
+        // its artifacts resolve under the results/<universe>/ its own runs
+        // wrote, rather than under a universe id it never declared.
+        const own = child.universes[0];
+        visit(child, own.data, own.file, "", "universe", own.id);
       } else {
         visit(
           child,

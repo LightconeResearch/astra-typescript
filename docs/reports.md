@@ -41,6 +41,86 @@ not resolve references or repeat ASTRA's semantic validation.
 The `isResolvedAnalysis`, `isValidationReport`, and `isStatusReport` type guards
 perform the same checks and return a boolean.
 
+## Lookups and selections
+
+Build indexes when a consumer needs repeated lookups. Indexes hold the original
+objects and derive ownership from the analysis collections, without parsing
+element refs or result IDs:
+
+```ts
+import {
+  indexResolvedAnalysis,
+  parseResolvedAnalysis,
+  selectResult,
+  getResultOwner,
+  walkResultDependencies,
+} from "@astra-spec/sdk/reports";
+
+const report = parseResolvedAnalysis(candidate);
+const index = indexResolvedAnalysis(report);
+const output = index.elementByRef.get("stage.outputs.fit");
+
+if (output?.collection === "outputs") {
+  console.log(output.analysis.key, output.element.format);
+}
+
+const fit = selectResult(index, "stage.outputs.fit", "universes.baseline");
+if (fit) console.log(getResultOwner(index, fit.id)?.key);
+
+const comparison = selectResult(index, "outputs.comparison", "universes.alternate");
+if (comparison) console.log([...walkResultDependencies(index, comparison.id)]);
+```
+
+In the upstream `driven` fixture, the fit output belongs to analysis `stage`,
+while its baseline result belongs to the root analysis (`""`). The alternate
+comparison reads both the alternate fit and a result pinned to the stage's own
+local universe. Following result dependencies preserves both references.
+
+`ResolvedAnalysisIndex` provides four readonly maps:
+
+| Map | Lookup |
+| --- | --- |
+| `analysisByKey` | Analysis key to analysis, including root key `""` |
+| `elementByRef` | Element ref to an `IndexedElement` with `collection`, declaring `analysis`, and typed `element` |
+| `resultById` | Result ID to result |
+| `resultsByOutput` | Output ref to all its planned results, in report order |
+
+`IndexedElement` is discriminated by its `ElementCollection`: `inputs`,
+`outputs`, `decisions`, `prior_insights`, `findings`, or `universes`.
+
+| Helper | Behavior |
+| --- | --- |
+| `getDeclaredAnalysis(index, analysisKey, declarationId)` | Follow one local declaration, including an alias back to the root |
+| `walkAnalyses(index, startKey = "")` | Depth-first declaration walk; each analysis appears once, so cycles terminate |
+| `getResultOwner(index, resultId)` | Find the universe's declaring analysis, or the output's for a result built once |
+| `getResult(index, outputRef, universeRef?)` | Exact output/universe lookup; omitting the universe requests only a result built once |
+| `selectResult(index, outputRef, universeRef)` | For a known universe, select the exact result or fall back to that output's result built once |
+| `getSelectedOption(index, universeRef, decisionRef)` | Find the option in the universe's effective selection; absence remains `undefined` |
+| `walkResultDependencies(index, resultId)` | Depth-first walk of upstream results in input order, excluding the starting result and yielding each dependency once |
+| `getEvidence(index, insightRef, evidenceIndex)` | Find an item by its insight ref and zero-based evidence index |
+| `getCitedResults(index, insightRef, evidenceIndex)` | Return the item's cited results in citation order, including results from different universes |
+
+Analysis traversal retains the original `declares` maps, including repeated
+aliases. Dependency traversal follows explicit result IDs through pins and
+terminates on cycles. It uses depth-first input order; the report's `results`
+array retains its dependency-first order.
+
+There is no implicit universe choice or inferred default option. A missing
+result does not establish that an output is inactive. Evidence citations are
+returned together: a switch can cite multiple results built once, and this
+report does not retain enough switch information to filter them by selected
+universe. `getEvidence` preserves the authored artifact address even when no
+results are cited.
+
+These helpers expect a semantically valid resolved report. Unknown lookups
+return `undefined` or an empty traversal/list; dangling references are skipped.
+Indexing rejects duplicate analysis keys, element refs, and result IDs with
+`ReportIndexError`. Its `code` is `DUPLICATE_ANALYSIS_KEY`,
+`DUPLICATE_ELEMENT_REF`, or `DUPLICATE_RESULT_ID`, and `key` identifies the
+duplicate. `ReportIndexErrorCode` describes these codes. The index and selections
+are derived data; the serialized Python
+report is unchanged. Treat the report and index as readonly after indexing.
+
 ## JSON conventions
 
 - Fields use Python's snake_case spelling.

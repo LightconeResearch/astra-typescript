@@ -62,10 +62,26 @@ try {
   await writeFile(runtime, `
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseResolvedAnalysis } from "@astra-spec/sdk/reports";
+import {
+  parseResolvedAnalysis, indexResolvedAnalysis, getDeclaredAnalysis,
+  getResultOwner, selectResult, getSelectedOption, walkAnalyses,
+  walkResultDependencies, getEvidence, getCitedResults,
+} from "@astra-spec/sdk/reports";
 const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
 assert.equal(parseResolvedAnalysis(report), report);
 assert.equal(report.schema_version, "astra-tools.resolved-analysis.v1");
+const index = indexResolvedAnalysis(report);
+assert.equal(index.elementByRef.get("stage.outputs.fit").analysis.key, "stage");
+assert.equal(getResultOwner(index, "stage.fit#baseline").key, "");
+assert.equal(getResultOwner(index, "stage:fit#local").key, "stage");
+assert.equal(selectResult(index, "outputs.shared", "universes.alternate").id, "shared");
+assert.equal(getSelectedOption(index, "universes.alternate", "stage.decisions.method").id, "b");
+assert.equal(getDeclaredAnalysis(index, "stage", "parent").key, "");
+assert.deepEqual([...walkAnalyses(index)].map(value => value.key), ["", "stage"]);
+assert.deepEqual([...walkResultDependencies(index, "comparison#alternate")].map(value => value.id),
+  ["shared", "stage.fit#alternate", "stage:fit#local"]);
+assert.equal(getEvidence(index, "findings.fit", 1).artifact, "stage.fit#local");
+assert.deepEqual(getCitedResults(index, "findings.fit", 1).map(value => value.id), ["stage:fit#local"]);
 `);
   const fixture = join(temporary, "resolve.json");
   await writeFile(fixture, await readFile(
@@ -78,12 +94,21 @@ assert.equal(report.schema_version, "astra-tools.resolved-analysis.v1");
   await writeFile(join(temporary, "consumer.mts"), `
 import {
   parseResolvedAnalysis, parseValidationReport, parseStatusReport,
+  indexResolvedAnalysis, getResultOwner, selectResult,
   type ResolvedAnalysis, type ValidationReport, type StatusReport,
 } from "@astra-spec/sdk/reports";
 declare const candidate: unknown;
 const analysis: ResolvedAnalysis = parseResolvedAnalysis(candidate);
 const validation: ValidationReport = parseValidationReport(candidate);
 const status: StatusReport = parseStatusReport(candidate);
+const index = indexResolvedAnalysis(analysis);
+const selected = selectResult(index, "outputs.fit", "universes.baseline");
+const owner = selected ? getResultOwner(index, selected.id) : undefined;
+const element = index.elementByRef.get("outputs.fit");
+if (element?.collection === "outputs") {
+  const format: string = element.element.format;
+  void format;
+}
 const version: "astra-tools.resolved-analysis.v1" = analysis.schema_version;
 const valid: boolean = validation.valid;
 const states: readonly string[] = Object.values(status.statuses).map(value => value.state);
@@ -91,7 +116,9 @@ const states: readonly string[] = Object.values(status.statuses).map(value => va
 analysis.analyses.push(analysis.analyses[0]!);
 // @ts-expect-error Public report fields are readonly.
 analysis.spec_version = "changed";
-void [version, valid, states];
+// @ts-expect-error Derived maps are readonly.
+index.analysisByKey.set("other", analysis.analyses[0]!);
+void [version, valid, states, owner];
 `);
   await writeFile(join(temporary, "tsconfig.json"), JSON.stringify({
     compilerOptions: {

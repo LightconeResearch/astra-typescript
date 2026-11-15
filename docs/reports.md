@@ -86,31 +86,46 @@ such as `SCHEMA_REQUIRED` or `SCHEMA_TYPE`. Missing-field paths include the
 missing property. Messages are descriptive; use the code and path in programs.
 `ReportValidationIssueCode` describes these codes.
 
-## Pinned upstream artifacts
+## Pinned upstream contract
 
-The schema and two portable fixture cases are vendored from astra-tools commit
+`upstream/astra-tools` is a Git submodule pinned to commit
 [`5504a2d`](https://github.com/astra-project/astra-tools/commit/5504a2d2a212921c9009e94c0b4b5fddca3ff9d4).
-`vendor/astra-tools/source.json` records the revision and each artifact's SHA-256.
-The upstream fixture manifest separately records the Python oracle and spec
-revisions used to produce its six reports. These are report-decoding fixtures;
-passing them does not establish resolver conformance.
+The generator reads its report schema directly, and tests read its six golden
+reports directly. The upstream fixture manifest separately records the Python
+oracle and spec revisions that produced those reports. These are report-decoding
+fixtures; passing them does not establish resolver conformance.
 
-Generation and checking are offline and require no Python:
+Clone with `git clone --recurse-submodules`, or initialize an existing checkout:
+
+```bash
+git submodule update --init upstream/astra-tools
+```
+
+Generation and checking use Node and Git. Once the submodule is initialized,
+they work offline and require no Python:
 
 ```bash
 npm run reports:generate
 npm run reports:check
 ```
 
-To refresh the vendored files, update the pinned revision in `source.json` and
-read that committed revision from a local astra-tools clone:
+To update the contract, fetch astra-tools, select the intended commit in the
+submodule, regenerate the TypeScript, and commit both the submodule pointer and
+generated files together:
 
 ```bash
-npm run reports:sync -- ../astra-tools
+git -C upstream/astra-tools fetch origin
+git -C upstream/astra-tools checkout --detach <commit>
+npm run reports:generate
+git add upstream/astra-tools src/reports/types.ts src/reports/schema.ts
 ```
 
-Sync reads Git objects, so uncommitted files in that clone are excluded. Review
-artifact and generated-code changes together. The generator rejects schema
-features it does not support. CI checks the hashes and generated output, decodes
-all six reports, and verifies the built npm package's runtime imports and
-TypeScript declarations.
+The generator rejects uncommitted changes to its schema and fixture inputs and
+schema features it does not support. CI initializes the pinned submodule, checks
+generated output, decodes all six reports, and verifies the built npm package's
+runtime imports and TypeScript declarations. Advancing the upstream repository
+does not change the pin automatically.
+
+The npm package contains the built SDK and embedded schema data. Its users need
+neither the submodule nor Git or Python; the submodule is used only to develop,
+test, and build the SDK.

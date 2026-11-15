@@ -19,7 +19,7 @@ import {
 type JsonObject = Record<string, unknown>;
 
 function fixture(operation: string, name = "driven"): JsonObject {
-  const path = resolve("vendor/astra-tools/report-fixtures", name, `${operation}.json`);
+  const path = resolve("upstream/astra-tools/tests/report-fixtures", name, `${operation}.json`);
   return JSON.parse(readFileSync(path, "utf-8")) as JsonObject;
 }
 

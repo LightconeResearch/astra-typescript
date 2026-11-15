@@ -16,7 +16,12 @@ try {
   const packedResult = JSON.parse(execFileSync("npm", [
     "pack", "--ignore-scripts", "--json", "--pack-destination", temporary,
   ], { cwd: root, encoding: "utf8" }));
-  const [{ filename }] = Array.isArray(packedResult) ? packedResult : Object.values(packedResult);
+  const [packageInfo] = Array.isArray(packedResult) ? packedResult : Object.values(packedResult);
+  const { filename } = packageInfo;
+  for (const { path } of packageInfo.files) {
+    assert.ok(path.startsWith("dist/") || ["LICENSE", "README.md", "package.json"].includes(path),
+      `Unexpected published file: ${path}`);
+  }
   execFileSync("tar", ["-xzf", join(temporary, filename), "-C", temporary]);
   const packed = join(temporary, "package");
   const manifest = JSON.parse(await readFile(join(packed, "package.json"), "utf8"));
@@ -62,9 +67,13 @@ const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
 assert.equal(parseResolvedAnalysis(report), report);
 assert.equal(report.schema_version, "astra-tools.resolved-analysis.v1");
 `);
-  execFileSync(process.execPath, [runtime,
-    join(root, "vendor/astra-tools/report-fixtures/driven/resolve.json"),
-  ], { stdio: "inherit" });
+  const fixture = join(temporary, "resolve.json");
+  await writeFile(fixture, await readFile(
+    join(root, "upstream/astra-tools/tests/report-fixtures/driven/resolve.json"),
+  ));
+  execFileSync(process.execPath, [runtime, fixture], {
+    cwd: temporary, env: { ...process.env, PATH: "" }, stdio: "inherit",
+  });
 
   await writeFile(join(temporary, "consumer.mts"), `
 import {

@@ -330,6 +330,23 @@ they do not parse data or prove that it is valid. Use `validateAnalysis` or
 - [`@astra-spec/sdk` on npm](https://www.npmjs.com/package/@astra-spec/sdk)
 - [Releases](https://github.com/LightconeResearch/astra-typescript/releases)
 
+## Development
+
+Clone with `git clone --recurse-submodules` so the pinned astra-tools report
+contract is available. For an existing checkout, run:
+
+```bash
+git submodule update --init upstream/astra-tools
+npm ci
+npm run reports:check
+npm test
+npm run test:reports:package
+```
+
+The [report contract guide](docs/reports.md#pinned-upstream-contract) describes
+updating the submodule and generated files together. The npm package includes
+the built SDK; package users need no submodule or Python installation.
+
 ## License
 
 BSD-3-Clause. See [LICENSE](./LICENSE).

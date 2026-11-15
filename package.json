@@ -1,6 +1,6 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.2.0-rc.1",
+  "version": "0.2.0-rc1",
   "description": "Native TypeScript validation, resolution and provenance checking for ASTRA 0.1.",
   "type": "module",
   "license": "BSD-3-Clause",

@@ -36,7 +36,8 @@
   ],
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.build.json",
-    "prepack": "npm run reports:check && npm run spec:check && npm run build",
+    "prepare": "npm run build",
+    "prepack": "npm run reports:check && npm run spec:check",
     "reports:generate": "node scripts/generate-report-contract.mjs",
     "reports:check": "node scripts/generate-report-contract.mjs --check",
     "test:reports:package": "npm run build && node scripts/check-report-package.mjs",

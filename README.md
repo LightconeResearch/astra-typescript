@@ -78,6 +78,10 @@ For an existing checkout, initialize both pinned sources with
 `git submodule update --init`. Generated runtime schema data is committed;
 the npm tarball excludes both upstream repositories.
 
+Git dependencies build through `prepare` using the committed schema data, so
+consumers can pin an SDK commit before its npm release. Source conformance and
+release packaging still check both initialized upstream repositories.
+
 Normal tests run without Python. The full spec analysis suite, document fixtures,
 portable report goldens, Git/source tests, and status transitions run in Node.
 The separate differential check requires an environment with the pinned Python

@@ -14,7 +14,7 @@ nav = [
   {"Validate" = "validation.md"},
   {"Resolve" = "resolution.md"},
   {"Python report contract" = "reports.md"},
-  {"Project readers" = "project-readers.md"},
+  {"Repository sources" = "project-readers.md"},
   {"API reference" = "api.md"},
   {"ASTRA specification" = "https://astra-spec.org/latest/"},
 ]

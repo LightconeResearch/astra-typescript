@@ -1,0 +1,97 @@
+/** Host-neutral ASTRA 0.1 workflows, driven by an injected repository provider. */
+import type { AnalysisSource, Tree } from "./sources/types.js";
+import type {
+  ResolvedAnalysis,
+  StatusReport,
+  ValidationReport,
+} from "./reports/types.js";
+import { InvalidAnalysisError } from "./errors.js";
+import { validated } from "./engine/validate.js";
+import {
+  resolve as resolveContext,
+  inputPath,
+  type Resolved,
+} from "./engine/resolve.js";
+import { checkStatus } from "./engine/status.js";
+import { places } from "./engine/universes.js";
+import { look } from "./sources/standins.js";
+export type {
+  AnalysisSource,
+  SourceProvider,
+  Tree,
+  Repository,
+  Entry,
+  EntryKind,
+  FollowedFile,
+  Digest,
+  Declaration,
+  DeclarationSource,
+  DeclarationOutcome,
+} from "./sources/types.js";
+export async function validate(
+  source: AnalysisSource,
+): Promise<ValidationReport> {
+  return (await validated(source.reader, source.folder, source.provider))
+    .report;
+}
+async function read(source: AnalysisSource): Promise<Resolved> {
+  const { report, context } = await validated(
+    source.reader,
+    source.folder,
+    source.provider,
+  );
+  if (!report.valid || !context) throw new InvalidAnalysisError(report);
+  return resolveContext(context);
+}
+export async function resolve(
+  source: AnalysisSource,
+): Promise<ResolvedAnalysis> {
+  return (await read(source)).analysis;
+}
+export async function status(source: AnalysisSource): Promise<StatusReport> {
+  return checkStatus(await read(source), source.provider);
+}
+async function contentBytes(
+  reader: Tree,
+  path: string,
+): Promise<Uint8Array | undefined> {
+  const found = await look(reader, path);
+  if (!found.here) return undefined;
+  return found.file ? found.file.read() : reader.read(path);
+}
+/** Read actual result content from a selected place in its worktree or commit tree. */
+export async function readResult(
+  source: AnalysisSource,
+  resultId: string,
+  placeIndex = 0,
+): Promise<Uint8Array | undefined> {
+  if (!Number.isSafeInteger(placeIndex) || placeIndex < 0)
+    throw new RangeError("placeIndex must be a non-negative integer");
+  const resolved = await read(source);
+  const planned = resolved.planned.get(resultId);
+  if (!planned) return undefined;
+  const place = places(resolved.context.stack, planned)[placeIndex];
+  if (!place) return undefined;
+  return contentBytes(
+    resolved.context.stack.analyses.get(planned.owner)!.reader,
+    place.bytes,
+  );
+}
+/** Read actual input content; an unfetched stand-in has no bytes to return. */
+export async function readInput(
+  source: AnalysisSource,
+  inputRef: string,
+): Promise<Uint8Array | undefined> {
+  const resolved = await read(source);
+  const stack = resolved.context.stack;
+  for (const [identity, key] of resolved.keys) {
+    for (const id of Object.keys(stack.analysis(identity).inputs)) {
+      if ([key, "inputs", id].filter(Boolean).join(".") !== inputRef) continue;
+      return contentBytes(
+        stack.analyses.get(identity)!.reader,
+        inputPath(stack, stack.element(identity, "input", id)),
+      );
+    }
+  }
+  return undefined;
+}

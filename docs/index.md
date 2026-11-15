@@ -1,66 +1,31 @@
 # ASTRA TypeScript SDK
 
-Validate an entire ASTRA project or open it as one resolved, serializable data
-structure. The SDK is host-neutral and works in Node, JupyterLab, editors, and
-browser-backed integrations through the same small storage interface.
-
-[Get the package on npm](https://www.npmjs.com/package/@astra-spec/sdk){ .md-button .md-button--primary }
-[View the source](https://github.com/LightconeResearch/astra-typescript){ .md-button }
-
-The [Python report contract](reports.md), available from `@astra-spec/sdk/reports`,
-provides ASTRA 0.1 report types and decoders as the first part of the SDK 0.2
-migration. The project workflows below still implement ASTRA 0.0.14.
-
-## Install
-
-The SDK requires Node.js 20 or newer.
-
-```bash
-npm install @astra-spec/sdk
-```
-
-## Two project workflows
-
-| Goal | API | Result |
-| --- | --- | --- |
-| Check whether a project is valid | [`validateAnalysis()`](validation.md) | `{ valid, issues }` |
-| Open a project for a viewer or integration | [`resolveAnalysis()`](resolution.md) | `{ document, bindings }` |
-
-Both functions consume a [`ProjectReader`](project-readers.md). In Node, point
-the built-in reader at the **directory containing** `astra.yaml`:
+The SDK implements ASTRA 0.1 validation, resolution, and provenance checking in
+TypeScript. Version 0.2 is a breaking cutover; analyses before ASTRA 0.1 are unsupported.
 
 ```ts
-import { resolveAnalysis } from "@astra-spec/sdk";
-import { createNodeProjectReader } from "@astra-spec/sdk/node";
+import { validate, resolve, status } from "@astra-spec/sdk/node";
 
-const reader = createNodeProjectReader("/path/to/project");
-const bundle = await resolveAnalysis(reader, { universeId: "baseline" });
-
-console.log(bundle.document.analysis);
-console.log(bundle.bindings);
+const validation = await validate("/path/to/analysis");
+const analysis = await resolve("/path/to/analysis");
+const report = await status("/path/to/analysis");
 ```
 
-`resolveAnalysis()` performs complete validation itself. Do not validate first
-unless you specifically need the non-throwing validation result.
+Node workflows require Node 20+ and Git. They never execute recipes or invoke
+Python. The root entry point provides the same report model and host-neutral
+workflows for an injected repository provider.
 
-## Receiving a resolved bundle
+| Goal | Guide |
+| --- | --- |
+| Check syntax, schema, references and semantic rules | [Validation](validation.md) |
+| Inspect all universes, results, provenance and resources | [Resolution and status](resolution.md) |
+| Supply repository access in another host | [Sources](project-readers.md) |
+| Decode transported data and build graph lookups | [Report contract](reports.md) |
+| Find exports, options and errors | [API reference](api.md) |
 
-If another process or service produced the resolved bundle, validate the
-already-deserialized transport value before using it:
+The shared report schemas come from a pinned astra-tools submodule. Authored
+schemas, rules, and conformance cases come from a pinned astra-spec submodule.
+Python is an explicit development/CI oracle, not a runtime dependency.
 
-```ts
-import { parseResolvedAnalysisBundle } from "@astra-spec/sdk";
-
-const candidate: unknown = JSON.parse(serializedBundle);
-const bundle = parseResolvedAnalysisBundle(candidate);
-```
-
-The decoder returns the same object with the `ResolvedAnalysisBundle` type. It
-does not read or resolve a project. See
-[Resolve an ASTRA project](resolution.md#decode-a-transported-bundle) for
-diagnostics and the non-throwing type guard.
-
-!!! info "Authoring ASTRA"
-
-    This site documents the TypeScript SDK. The canonical schema and authoring
-    model live in the [ASTRA specification](https://astra-spec.org/latest/).
+This checkout prepares 0.2.0-rc.1. Build an npm tarball with `npm pack` to test the
+candidate before publication; see the [repository instructions](https://github.com/LightconeResearch/astra-typescript#development-and-conformance).

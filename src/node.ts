@@ -1,87 +1,57 @@
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
-
-import {
-  assertProjectPath,
-  ProjectPathError,
-  type ProjectDirectoryEntry,
-  type ProjectEntry,
-  type ProjectReader,
-} from "./project-reader.js";
-
-function isMissing(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return code === "ENOENT" || code === "ENOTDIR";
+/** Native filesystem/Git adapters. No Python executable or package is used. */
+import { NodeSourceProvider, type NodeSourceOptions } from "./sources/node.js";
+import * as engine from "./resolver.js";
+import type {
+  ResolvedAnalysis,
+  StatusReport,
+  ValidationReport,
+} from "./reports/types.js";
+export { NodeSourceProvider } from "./sources/node.js";
+export type { NodeSourceOptions } from "./sources/node.js";
+export {
+  CacheError,
+  GitError,
+  NoAnalysisError,
+  InvalidAnalysisError,
+} from "./errors.js";
+export async function validate(
+  path?: string,
+  options: NodeSourceOptions = {},
+): Promise<ValidationReport> {
+  const provider = new NodeSourceProvider(options);
+  return engine.validate(await provider.worktree(path));
 }
-
-/** Create the bundled Node adapter rooted at one ASTRA project directory. */
-export function createNodeProjectReader(projectRoot: string): ProjectReader {
-  const root = resolve(projectRoot);
-  let realRoot: Promise<string> | undefined;
-  const resolvedRoot = (): Promise<string> => {
-    realRoot ??= realpath(root);
-    return realRoot;
-  };
-
-  const assertContained = (base: string, target: string, path: string): string => {
-    const fromRoot = relative(base, target);
-    if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
-      throw new ProjectPathError(`Project path escapes the project root: ${path}`);
-    }
-    return target;
-  };
-  const rooted = (path: string): string => {
-    try {
-      assertProjectPath(path);
-    } catch {
-      throw new ProjectPathError(`Project path must be normalized and relative: ${path}`);
-    }
-    return assertContained(root, resolve(root, path), path);
-  };
-  const existing = async (path: string): Promise<string> => {
-    const target = rooted(path);
-    const [canonicalRoot, resolvedTarget] = await Promise.all([
-      resolvedRoot(),
-      realpath(target),
-    ]);
-    return assertContained(canonicalRoot, resolvedTarget, path);
-  };
-  const entryFor = async (path: string): Promise<ProjectEntry> => {
-    const info = await stat(await existing(path));
-    if (info.isDirectory()) return { type: "directory" };
-    if (!info.isFile()) throw new Error(`Unsupported project entry type: ${path}`);
-    const size = Number(info.size);
-    const modifiedAtMs = Math.trunc(info.mtimeMs);
-    if (!Number.isSafeInteger(size) || size < 0
-      || !Number.isSafeInteger(modifiedAtMs) || modifiedAtMs < 0) {
-      throw new Error(`Invalid file metadata: ${path}`);
-    }
-    return { type: "file", size, modifiedAtMs };
-  };
-
-  return {
-    async readText(path: string): Promise<string> {
-      const bytes = await readFile(await existing(path));
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    },
-    async stat(path: string): Promise<ProjectEntry | undefined> {
-      try {
-        return await entryFor(path);
-      } catch (error) {
-        if (isMissing(error)) return undefined;
-        throw error;
-      }
-    },
-    async readDirectory(path: string): Promise<ProjectDirectoryEntry[]> {
-      const directory = await existing(path);
-      const entries = await readdir(directory, { withFileTypes: true });
-      return Promise.all(entries.map(async (entry): Promise<ProjectDirectoryEntry> => {
-        if (entry.isFile()) return { name: entry.name, type: "file" };
-        if (entry.isDirectory()) return { name: entry.name, type: "directory" };
-        const childPath = path ? `${path}/${entry.name}` : entry.name;
-        const child = await entryFor(childPath);
-        return { name: entry.name, type: child.type };
-      }));
-    },
-  };
+export async function resolve(
+  path?: string,
+  options: NodeSourceOptions = {},
+): Promise<ResolvedAnalysis> {
+  const provider = new NodeSourceProvider(options);
+  return engine.resolve(await provider.worktree(path));
+}
+export async function status(
+  path?: string,
+  options: NodeSourceOptions = {},
+): Promise<StatusReport> {
+  const provider = new NodeSourceProvider(options);
+  return engine.status(await provider.worktree(path));
+}
+export async function readResult(
+  path: string,
+  resultId: string,
+  options: NodeSourceOptions & { readonly placeIndex?: number } = {},
+): Promise<Uint8Array | undefined> {
+  const provider = new NodeSourceProvider(options);
+  return engine.readResult(
+    await provider.worktree(path),
+    resultId,
+    options.placeIndex,
+  );
+}
+export async function readInput(
+  path: string,
+  inputRef: string,
+  options: NodeSourceOptions = {},
+): Promise<Uint8Array | undefined> {
+  const provider = new NodeSourceProvider(options);
+  return engine.readInput(await provider.worktree(path), inputRef);
 }

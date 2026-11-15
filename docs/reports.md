@@ -5,9 +5,9 @@
 generated TypeScript types and runtime decoders, with the same JSON field names
 and version markers as Python.
 
-This entry point establishes the contract for the SDK 0.2 migration. The existing
-root and `/node` project workflows still implement ASTRA 0.0.14; native ASTRA 0.1
-validation, resolution, and status are later stages of that migration.
+The root entry point also exports this contract and the host-neutral ASTRA 0.1
+engine. `/reports` provides transport-only access; `/node` provides native
+filesystem/Git workflows. SDK 0.2 supports ASTRA 0.1 exclusively.
 
 ## Decode a report
 
@@ -207,5 +207,6 @@ runtime imports and TypeScript declarations. Advancing the upstream repository
 does not change the pin automatically.
 
 The npm package contains the built SDK and embedded schema data. Its users need
-neither the submodule nor Git or Python; the submodule is used only to develop,
-test, and build the SDK.
+neither the submodule nor Python. Node repository workflows require Git; report
+decoders and selectors need no Git executable. The submodules are used only to
+develop, test, and build the SDK.

@@ -1,75 +1,47 @@
-# Project readers
+# Repository sources
 
-The SDK knows ASTRA project semantics, not how a host stores files. Both public
-workflows read through one small asynchronous interface:
+The host-neutral engine takes an `AnalysisSource`:
 
 ```ts
-interface ProjectReader {
-  readText(path: string): Promise<string>;
-  stat(path: string): Promise<ProjectEntry | undefined>;
-  readDirectory(path: string): Promise<ProjectDirectoryEntry[]>;
+interface AnalysisSource {
+  readonly reader: Tree;
+  readonly folder: string;
+  readonly provider: SourceProvider;
 }
 ```
 
-## Node
+`folder` is the analysis's repository-relative directory, with `""` for the tree
+root. Paths use POSIX separators. A `Tree` represents a working tree or commit
+snapshot and supplies binary reads, exact entry kinds, tracking information,
+repository ownership, and explicit stand-in content access. It distinguishes
+files, folders, symlinks and Git links. Regular source reads never follow symlinks.
 
-The Node entry point provides a filesystem-backed implementation. Pass the
-project directory, not the path to `astra.yaml`:
+`SourceProvider` supplies declaration resolution, historical trees, remote commits
+and offline behavior. `Repository` supplies HEAD/commit queries, ancestry,
+default remote and tracked paths. `FollowedFile` supports content reads and an
+optional streaming digest; `Tree` can also supply streaming digests.
 
-```ts
-import { createNodeProjectReader } from "@astra-spec/sdk/node";
+Browser and Jupyter hosts can implement these interfaces using their repository
+service. A filesystem-only Contents API cannot provide commit, tracking and
+submodule facts by itself. The engine applies ASTRA semantics in TypeScript;
+the provider supplies bytes and Git facts.
 
-const reader = createNodeProjectReader("/path/to/project");
-```
-
-It rejects symbolic links that escape the chosen root and decodes text as
-strict UTF-8.
-
-## Other hosts
-
-JupyterLab, editors, remote stores, and browser-local integrations implement
-the same contract with their native storage API. The SDK owns all ASTRA
-loading, parsing, traversal, and validation logic; adapters should not
-reimplement it.
-
-### Paths
-
-- Every path is normalized POSIX and relative to the chosen project root.
-- The empty string `""` denotes the project root.
-- `readDirectory()` returns immediate children with bare names; ordering is
-  irrelevant.
-- Adapters must prevent backend-specific escapes and throw `ProjectPathError`
-  when one is attempted.
-
-The exported `assertProjectPath()`, `joinProjectPath()`, and
-`projectDirname()` helpers keep adapter path handling consistent with the SDK.
-
-### Reads and metadata
-
-`readText()` returns a string for one existing UTF-8 file. It rejects missing
-paths, directories, decoding failures, and backend errors.
-
-`stat()` returns `undefined` **only** when the path does not exist:
+For Node, use the built-in provider:
 
 ```ts
-type ProjectEntry =
-  | {
-      type: "file";
-      size: number;
-      modifiedAtMs: number;
-    }
-  | { type: "directory" };
+import { NodeSourceProvider } from "@astra-spec/sdk/node";
+import { resolve } from "@astra-spec/sdk/resolver";
+
+const provider = new NodeSourceProvider({ offline: true });
+const source = await provider.worktree("/path/to/analysis");
+const analysis = await resolve(source);
 ```
 
-File size and Unix modification time in milliseconds must be non-negative safe
-integers. `readDirectory()` returns immediate entries shaped as
-`{ name, type }`, where `type` is `"file"` or `"directory"`.
+The Node provider uses Git directly, reads commit objects without checking them
+out, and uses checked-out submodules before cached remotes where possible. It
+never invokes Python, recipes, LFS, git-annex, or DVC commands. Content hashing
+and pointer recognition are streamed/bounded where the Node backend supports it.
 
-The SDK validates every adapter response. Malformed responses and ordinary
-backend exceptions become `ProjectLoadError` with `READ_FAILED`;
-`ProjectPathError` becomes `PROJECT_PATH_ESCAPE`.
-
-!!! note
-
-    Deterministic output locations eliminate directory scans for artifacts,
-    but `readDirectory()` remains necessary to discover universe files.
+Source instances cache directory/object lookups for one operation. Open a fresh
+source to observe structural file changes; a provider is not an atomic filesystem
+snapshot.

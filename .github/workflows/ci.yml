@@ -24,6 +24,26 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run reports:check
+      - run: npm run spec:check
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:reports:package
+
+  python-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: astral-sh/setup-uv@v8
+        with:
+          python-version: "3.13"
+      - run: npm ci
+      - run: uv sync --frozen --project upstream/astra-tools
+      - run: npm run test:conformance
+        env:
+          ASTRA_PYTHON: ${{ github.workspace }}/upstream/astra-tools/.venv/bin/python

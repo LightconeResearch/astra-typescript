@@ -1,3 +1,6 @@
 [submodule "upstream/astra-tools"]
 	path = upstream/astra-tools
 	url = https://github.com/astra-project/astra-tools.git
+[submodule "upstream/astra-spec"]
+	path = upstream/astra-spec
+	url = https://github.com/astra-project/astra-spec.git

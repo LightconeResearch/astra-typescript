@@ -8,3 +8,5 @@ site/
 .idea/
 coverage/
 *.tsbuildinfo
+__pycache__/
+.pytest_cache/

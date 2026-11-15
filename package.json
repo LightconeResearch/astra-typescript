@@ -1,7 +1,7 @@
 {
   "name": "@astra-spec/sdk",
-  "version": "0.1.2",
-  "description": "TypeScript SDK for validating ASTRA projects and opening them as resolved data.",
+  "version": "0.2.0-rc.1",
+  "description": "Native TypeScript validation, resolution and provenance checking for ASTRA 0.1.",
   "type": "module",
   "license": "BSD-3-Clause",
   "publishConfig": {
@@ -24,22 +24,29 @@
       "types": "./dist/reports/index.d.ts",
       "import": "./dist/reports/index.js",
       "default": "./dist/reports/index.js"
+    },
+    "./resolver": {
+      "types": "./dist/resolver.d.ts",
+      "import": "./dist/resolver.js",
+      "default": "./dist/resolver.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run reports:check && npm run clean && npm run build",
-    "schema:sync": "node scripts/sync-bundled-schema.mjs",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "prepack": "npm run reports:check && npm run spec:check && npm run build",
     "reports:generate": "node scripts/generate-report-contract.mjs",
     "reports:check": "node scripts/generate-report-contract.mjs --check",
     "test:reports:package": "npm run build && node scripts/check-report-package.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "spec:generate": "node scripts/generate-spec-contract.mjs",
+    "spec:check": "node scripts/generate-spec-contract.mjs --check",
+    "test:conformance": "npm run build && node scripts/check-python-conformance.mjs && node scripts/check-python-scenarios.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -60,7 +67,6 @@
   },
   "dependencies": {
     "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1",
     "yaml": "^2.6.1"
   },
   "devDependencies": {

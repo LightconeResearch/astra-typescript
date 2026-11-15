@@ -211,9 +211,9 @@ missing property. Messages are descriptive; use the code and path in programs.
 
 ## Pinned upstream contract
 
-`upstream/astra-tools` is a Git submodule pinned to commit
-[`5504a2d`](https://github.com/astra-project/astra-tools/commit/5504a2d2a212921c9009e94c0b4b5fddca3ff9d4).
-The generator reads its report schema directly, and tests read its six golden
+`upstream/astra-tools` is a Git submodule pinned to the `0.3.0rc3` release at
+[`463b6a1`](https://github.com/astra-project/astra-tools/commit/463b6a151273dbd69594336c7968f6b84aa55962).
+The generator reads its report schema directly, and tests read its golden
 reports directly. The upstream fixture manifest separately records the Python
 oracle and spec revisions that produced those reports. These are report-decoding
 fixtures; passing them does not establish resolver conformance.

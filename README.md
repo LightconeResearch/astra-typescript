@@ -85,7 +85,7 @@ release packaging still check both initialized upstream repositories.
 Normal tests run without Python. The full spec analysis suite, document fixtures,
 portable report goldens, Git/source tests, and status transitions run in Node.
 The separate differential check requires an environment with the pinned Python
-reference installed:
+reference (`astra-tools 0.3.0rc3`) installed:
 
 ```bash
 uv sync --frozen --project upstream/astra-tools

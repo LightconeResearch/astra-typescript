@@ -13,7 +13,8 @@ nav = [
   {"Home" = "index.md"},
   {"Validate" = "validation.md"},
   {"Resolve" = "resolution.md"},
-  {"Project readers" = "project-readers.md"},
+  {"Python report contract" = "reports.md"},
+  {"Repository sources" = "project-readers.md"},
   {"API reference" = "api.md"},
   {"ASTRA specification" = "https://astra-spec.org/latest/"},
 ]

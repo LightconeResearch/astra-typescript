@@ -1,69 +1,43 @@
-# Validate an ASTRA project
-
-`validateAnalysis()` answers one question: is this complete project valid?
-It recursively reads the root `astra.yaml`, path-backed analyses, and every
-universe file, then applies the bundled structural schema and project-level
-semantic and reference checks.
+# Validate an analysis
 
 ```ts
-import { validateAnalysis } from "@astra-spec/sdk";
-import { createNodeProjectReader } from "@astra-spec/sdk/node";
+import { validate, resolve, InvalidAnalysisError } from "@astra-spec/sdk/node";
 
-const reader = createNodeProjectReader("/path/to/project");
-const result = await validateAnalysis(reader);
-
-if (!result.valid) {
-  for (const issue of result.issues) {
-    const location = [issue.file, issue.path].filter(Boolean).join(":");
-    console.error(`${location}: ${issue.message}`);
-  }
+const report = await validate("/path/to/analysis", { offline: true });
+for (const item of report.diagnostics) {
+  console.log(item.code, item.level, item.location, item.related);
 }
-```
-
-## Result contract
-
-```ts
-interface AnalysisValidationResult {
-  readonly valid: boolean;
-  readonly issues: readonly ValidationIssue[];
-}
-
-interface ValidationIssue {
-  readonly code: string;
-  readonly message: string;
-  readonly file: string;
-  readonly path?: string;
-}
-```
-
-Each issue identifies the project-relative YAML file and, when available, the
-authored field path. The `code` is stable for programmatic handling; `message`
-is intended for people.
-
-Malformed YAML, non-JSON-compatible YAML values, schema violations, broken
-references, invalid aliases, and inconsistent universe selections all produce
-`{ valid: false, issues }`. All root universe files are checked, not only the
-one that would be selected for resolution.
-
-## Invalid project or unreadable project?
-
-Authored problems are validation results. Operational failures throw
-`ProjectLoadError` because the SDK could not safely answer the question. These
-include an unavailable backend, malformed reader responses, and a
-backend-specific escape from the chosen project root.
-
-```ts
-import { ProjectLoadError, validateAnalysis } from "@astra-spec/sdk";
 
 try {
-  const result = await validateAnalysis(reader);
-  // Inspect result.valid and result.issues.
+  const analysis = await resolve("/path/to/analysis");
 } catch (error) {
-  if (error instanceof ProjectLoadError) {
-    console.error(error.code, error.path, error.message);
-  }
+  if (error instanceof InvalidAnalysisError) console.error(error.report);
+  else throw error;
 }
 ```
 
-`ASTRA_SPEC_VERSION` reports the version of the canonical schema bundled into
-the installed SDK.
+`validate` returns `ValidationReport`: `root`, `valid`, `diagnostics`, `unchecked`,
+and a fixed `schema_version`. A MUST violation is an error; SHOULD violations are
+warnings and do not make the analysis invalid. Human wording can differ from the
+Python reference; diagnostic codes, levels, locations and related locations are
+the programmatic contract.
+
+Validation applies YAML 1.2 core parsing, JSON-compatible values, authored schemas,
+and semantic rules across the complete declared analysis graph. It checks all
+universes, including inheritance, imports, driving, pins, switches, decision
+usage, planned results, paths, tracking, and declared commits. It implements the
+current pinned validator catalogue (`unchecked` is empty).
+
+Locations use repository-relative files and JSON Pointers, with source line and
+column where available. A diagnostic from a commit tree includes its commit and
+remote repository where applicable. Provenance JSON schema diagnostics have no
+YAML source positions.
+
+Analyses must be in a Git working tree; an otherwise readable analysis outside
+one returns `NOT_IN_REPOSITORY`. A missing `astra.yaml` is `NoAnalysisError`.
+Analyses outside the 0.1 minor version are rejected with
+`UNSUPPORTED_SPEC_VERSION`. Null authored fields are checked as written.
+
+The SDK runs the pinned spec's full document and analysis conformance suites.
+Resolution and status validate internally, so a separate validation call is only
+needed when the caller wants a report instead of an exception.

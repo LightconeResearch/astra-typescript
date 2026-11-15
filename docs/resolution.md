@@ -1,159 +1,71 @@
-# Resolve an ASTRA project
-
-`resolveAnalysis()` validates a complete project, selects one root universe,
-and projects authored ASTRA into a recursive data structure for downstream
-tools.
+# Resolve, inspect status, and read resources
 
 ```ts
-import {
-  AnalysisValidationError,
-  ProjectLoadError,
-  resolveAnalysis,
-} from "@astra-spec/sdk";
-import { createNodeProjectReader } from "@astra-spec/sdk/node";
+import { resolve, status, readResult } from "@astra-spec/sdk/node";
+import { indexResolvedAnalysis, selectResult } from "@astra-spec/sdk";
 
-const reader = createNodeProjectReader("/path/to/project");
-
-try {
-  const bundle = await resolveAnalysis(reader, { universeId: "baseline" });
-  render(bundle.document, bundle.bindings);
-} catch (error) {
-  if (error instanceof AnalysisValidationError) {
-    console.error(error.issues);
-  } else if (error instanceof ProjectLoadError) {
-    console.error(error.code, error.path, error.message);
-  }
+const folder = "/path/to/analysis";
+const analysis = await resolve(folder, { offline: true });
+const index = indexResolvedAnalysis(analysis);
+const selected = selectResult(index, "outputs.fit", "universes.baseline");
+const report = await status(folder, { offline: true });
+if (selected) {
+  console.log(selected.command, selected.places, report.statuses[selected.id]);
+  const bytes = await readResult(folder, selected.id, { offline: true });
 }
 ```
 
-An invalid authored project throws `AnalysisValidationError`; its `issues` have
-the same contract returned by `validateAnalysis()`. Loading failures and an
-explicitly requested universe that does not exist throw `ProjectLoadError`.
+## Resolved data
 
-## Universe selection
+`resolve` returns the same JSON shape as Python's `astra.api.resolve`. Analyses
+form a flat declaration graph; `""` identifies the driver. Declaration cycles
+and aliases are retained, while canonical keys choose the shortest declaration
+chain with alphabetical tie-breaking. Planned results are ordered after their
+result dependencies.
 
-Pass `universeId` when a project has multiple root universes. Without it, the
-first universe filename in lexical order is selected implicitly. When no
-universe files exist, authored defaults are used and the resolved universe ID
-is `default`.
+All universes are resolved together. Results identify their output, optional
+universe, all places, ordered input sources, and a rendered command when they can
+be built entirely from working-tree files. Driven subanalysis results belong to
+the driver's universes; results built once belong to their output's analysis.
+Pins can select results owned by another analysis or universe.
 
-The resolved document records the selection and all available root universe
-IDs:
+Switches and inheritance instructions are applied internally. `Result.inputs`
+holds effective dependencies; `Output.inputs` and `Analysis.switches` retain
+authored dependency edges, including unplanned branches. An output with no planned
+result is not necessarily inactive. Use the [graph helpers](reports.md#lookups-and-selections)
+to navigate the public model without parsing IDs.
 
-```ts
-bundle.document.universe;
-// {
-//   universeId: "baseline",
-//   availableUniverseIds: ["baseline", "svm_focused"],
-//   source: "explicit"
-// }
-```
+## Status
 
-## Bundle shape
+`status` returns `StatusReport`. Each planned result is `unchanged`, `stale`, or
+`missing`; its byte availability is independently `present` or `absent`.
+For results, `present` means the recorded content is available, rather than
+merely that some file exists at the result path.
 
-```ts
-interface ResolvedAnalysisBundle {
-  document: ResolvedAnalysisDocument;
-  bindings: ArtifactBinding[];
-}
-```
+The checker validates records, reads the analysis at each record's generation
+commit, compares the declaration and directly selected decisions/switch steps,
+checks input content, and propagates stale upstream results. Cosmetic label and
+description changes do not stale a result. Records retain the recorded execution
+environment and runner; the checker never executes recipes.
 
-`document` is JSON-serializable and contains the universe metadata and one
-recursive analysis tree. Collections remain ordered arrays. The resolver:
+Missing or unfetched result bytes do not alone stale its record. Git LFS and
+SHA-256 git-annex pointers can identify input content without fetching it; DVC
+and non-SHA-256 annex content require actual bytes for content comparison.
+Fetching these large files is a host/runner operation.
 
-- assigns canonical paths to every analysis and record;
-- resolves aliases while retaining the authored `from` value;
-- normalizes decision options and effective selections;
-- evaluates conditions and exposes `active` on outputs and decisions;
-- resolves output provenance, supporting insights, and artifact evidence.
+`resolve` and `status` currently open separate reads. Their `head` fields identify
+the Git commit, not uncommitted file contents; equal HEAD does not establish a
+single working-tree snapshot.
 
-The root analysis path is `$`; child analyses use dotted IDs such as `stage`
-and `stage.leaf`. Record paths include their collection, for example
-`outputs.figure` and `stage.outputs.plot`.
+## Resource reads
 
-## Decode a transported bundle
+`readInput(folder, inputRef, options?)` and `readResult(folder, resultId, options?)`
+return actual content bytes. They follow the model's owning repository/commit,
+so historical paths are read from Git objects rather than accidentally from the
+current working tree. A stand-in whose content is unavailable returns
+`undefined`; pointer text is never returned as content.
 
-A `ResolvedAnalysisBundle` produced in the same TypeScript process already has
-the SDK type. Once a bundle crosses a JSON, structured-clone, storage, message,
-or API boundary, treat it as `unknown` and restore that guarantee with the
-runtime decoder:
-
-```ts
-import {
-  parseResolvedAnalysisBundle,
-  ResolvedAnalysisBundleValidationError,
-} from "@astra-spec/sdk";
-
-const candidate: unknown = JSON.parse(serializedBundle);
-
-try {
-  const bundle = parseResolvedAnalysisBundle(candidate);
-  render(bundle.document, bundle.bindings);
-} catch (error) {
-  if (error instanceof ResolvedAnalysisBundleValidationError) {
-    for (const issue of error.issues) {
-      console.error(`${issue.path}: ${issue.message}`);
-    }
-  }
-}
-```
-
-For branch-based control flow, `isResolvedAnalysisBundle(candidate)` provides a
-boolean TypeScript type guard instead.
-
-`parseResolvedAnalysisBundle()` validates already-deserialized data; it is not
-an alias for `JSON.parse`. It checks the complete known resolved shape and the
-current `RESOLVED_ANALYSIS_SCHEMA_VERSION`, returns the original object without
-cloning it, and performs no project I/O, reference checking, or semantic
-resolution. It rejects non-finite numeric fields and negative artifact byte
-sizes so accepted values remain safe to transport. Additional unknown fields
-remain intact and do not invalidate the bundle.
-
-## Deterministic artifact paths
-
-Artifact locations are derived directly; the resolver never scans `results/`.
-
-| Output owner | Artifact path |
-| --- | --- |
-| Root analysis | `results/<universe>/<output>.<format>` |
-| Inline descendant | `results/<universe>/<analysis>.<output>.<format>` |
-| Deeper inline descendant | Additional analysis IDs joined with dots |
-| Path-backed analysis | Its own `results/` directory and a fresh dotted namespace |
-
-A missing artifact is not a validation failure. Inactive outputs, outputs with
-no format, and outputs whose known file is absent simply have no artifact
-descriptor or binding.
-
-Each materialized output has an `ArtifactBinding`:
-
-```ts
-interface ArtifactBinding {
-  outputPath: string;
-  path: string;
-  cacheToken: string;
-}
-```
-
-`cacheToken` is an opaque equality token for cache-busting artifact reads. It
-is SHA-256 over the project-relative path, integer modification time in
-milliseconds, and byte size. It is deliberately not a content hash, revision
-number, or value that consumers should parse or order.
-
-## Derived views
-
-The resolved document avoids duplicated lookup structures. Derive them only
-when a consumer needs them:
-
-```ts
-import { collectCitedDois, indexAnalysis, walkAnalyses } from "@astra-spec/sdk";
-
-const index = indexAnalysis(bundle.document);
-const figure = index.recordByPath.get("stage.outputs.figure");
-const owner = index.analysisByRecordPath.get("stage.outputs.figure"); // the "stage" node
-
-for (const analysis of walkAnalyses(bundle.document)) {
-  console.log(analysis.canonicalPath);
-}
-
-const citedDois = collectCitedDois(bundle.document);
-```
+A result may have multiple places; select one with `placeIndex`. Resource access
+validates/resolves the analysis internally. It reads available content independently
+of provenance state; use `status` when deciding whether that content is suitable
+for publication or downstream work.

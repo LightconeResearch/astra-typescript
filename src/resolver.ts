@@ -113,14 +113,24 @@ export async function* resultResources(
       const path = locations[placeIndex]!.bytes;
       const found = await look(reader, path);
       if (!found.here) continue;
-      const read = () => (found.file ? found.file.read() : reader.read(path));
+      const content = async () => {
+        const current = await look(reader, path);
+        if (!current.here)
+          throw new Error(`Result content is no longer available at ${path}`);
+        return current;
+      };
+      const read = async () => {
+        const current = await content();
+        return current.file ? current.file.read() : reader.read(path);
+      };
       yield {
         result,
         placeIndex,
         read,
         async *chunks() {
-          if (found.file?.chunks) yield* found.file.chunks();
-          else if (!found.file && reader.chunks) yield* reader.chunks(path);
+          const current = await content();
+          if (current.file?.chunks) yield* current.file.chunks();
+          else if (!current.file && reader.chunks) yield* reader.chunks(path);
           else yield await read();
         },
       };

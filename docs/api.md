@@ -35,7 +35,9 @@ content lookup. `readResults` buffers one whole file per yielded item.
 backpressure. Handles remain usable after enumeration. Content lookup can read
 a small prefix to recognize large-file pointers, but full content is deferred.
 Worktree changes after enumeration are visible; deleting content can make a later
-read fail. Missing/unfetched content is omitted when enumerating, as in `readResults`.
+read fail. Each read checks stand-ins again; content that became unfetched fails
+instead of returning pointer bytes. Missing/unfetched content is omitted when
+enumerating, as in `readResults`.
 
 ```ts
 import { resultResources } from "@astra-spec/sdk/node";

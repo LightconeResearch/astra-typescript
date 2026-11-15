@@ -137,6 +137,11 @@ two pins never collapse into one decision. Cycles terminate by excluding results
 already on the current route. Consumers can group occurrences for display after
 tracing, without losing route or universe information.
 
+Selected switch chains also contribute their decisions, following authored input
+pins and then case pins. These occurrences belong to the consuming result, and
+their route includes the effective input edge on which the switch was evaluated.
+Older reports without authored references retain output-decision tracing.
+
 ### Authored dependencies
 
 New reports also expose `Output.inputs` and `Analysis.switches`, including

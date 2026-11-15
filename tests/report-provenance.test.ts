@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { expect, it } from "vitest";
 import {
   indexResolvedAnalysis,
+  parseResolvedAnalysis,
   traceResultProvenance,
   type Analysis,
   type Result,
@@ -101,4 +104,76 @@ it("keeps pins, selections and every route through a diamond, terminating cycles
     decisions: [],
     inputs: [],
   });
+});
+
+function switchFixture() {
+  return parseResolvedAnalysis(JSON.parse(readFileSync(resolve(
+    "upstream/astra-tools/tests/report-fixtures/switch-status/resolve.json",
+  ), "utf8")));
+}
+
+it("includes decisions that only select an effective input's switch case", () => {
+  const index = indexResolvedAnalysis(switchFixture());
+  for (const [universe, option] of [["baseline", "a"], ["alternate", "b"]]) {
+    const trace = traceResultProvenance(index, `pipeline#${universe}`);
+    expect(trace.decisions.map((item) => ({
+      result: item.result.id,
+      decision: item.decision.ref,
+      universe: item.universe,
+      option: item.option?.id,
+      route: item.route.map((step) => step.source.entry),
+    }))).toEqual([{
+      result: `pipeline#${universe}`,
+      decision: "decisions.route",
+      universe: `universes.${universe}`,
+      option,
+      route: ["chosen"],
+    }]);
+  }
+});
+
+it("follows authored and nested case pins and terminates switch cycles", () => {
+  const original = switchFixture();
+  const root = original.analyses[0]!;
+  const nested = {
+    ref: "switches.nested",
+    decision: "decisions.cold",
+    cases: { a: { entry: "stale", target: "outputs.stale" } },
+  };
+  const report = {
+    ...original,
+    analyses: [{
+      ...root,
+      outputs: root.outputs.map((output) => output.ref === "outputs.pipeline"
+        ? { ...output, inputs: [{ entry: "chosen#baseline", target: "switches.chosen", universe: "universes.baseline" }] }
+        : output),
+      universes: root.universes.map((universe) => universe.ref === "universes.alternate"
+        ? { ...universe, selection: { ...universe.selection, "decisions.cold": "a" } }
+        : universe),
+      switches: [...root.switches!.map((item) => item.ref === "switches.chosen"
+        ? { ...item, cases: { ...item.cases, a: { entry: "nested#alternate", target: nested.ref, universe: "universes.alternate" } } }
+        : item), nested],
+    }],
+    results: original.results.map((result) => result.id === "pipeline#alternate"
+      ? { ...result, inputs: [{ entry: "chosen#baseline", result: "stale" }] }
+      : result),
+  };
+  const trace = traceResultProvenance(indexResolvedAnalysis(report), "pipeline#alternate");
+  expect(trace.decisions.map((item) => [
+    item.result.id, item.decision.ref, item.universe, item.option?.id,
+    item.route.map((step) => step.source.entry),
+  ])).toEqual([
+    ["pipeline#alternate", "decisions.route", "universes.baseline", "a", ["chosen#baseline"]],
+    ["pipeline#alternate", "decisions.cold", "universes.alternate", "a", ["chosen#baseline"]],
+  ]);
+  const cycling = {
+    ...report,
+    analyses: report.analyses.map((analysis) => ({
+      ...analysis,
+      switches: analysis.switches.map((item) => item.ref === nested.ref
+        ? { ...item, cases: { a: { entry: "chosen#baseline", target: "switches.chosen", universe: "universes.baseline" } } }
+        : item),
+    })),
+  };
+  expect(traceResultProvenance(indexResolvedAnalysis(cycling), "pipeline#alternate").decisions).toHaveLength(2);
 });

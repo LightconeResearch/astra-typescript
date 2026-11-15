@@ -395,3 +395,26 @@ it("does not read filtered content or buffer files while enumerating handles", a
   expect(text(Buffer.concat(chunks))).toBe(RESULT);
   reads.mockRestore();
 });
+
+it("refreshes stand-ins when a lazy handle is consumed after worktree changes", async () => {
+  await setup();
+  await mkdir(join(root, "results"));
+  const path = join(root, "results/result.txt");
+  await writeFile(path, RESULT);
+  const handles = [];
+  for await (const resource of resultResources(root)) handles.push(resource);
+  const resource = handles[0]!;
+  const digest = await digestBytes(encode(RESULT));
+  await writeFile(path, `version https://git-lfs.github.com/spec/v1\noid ${digest.content_hash}\nsize ${digest.size}\n`);
+  expect(await readResult(root, "result")).toBeUndefined();
+  await expect(resource.read()).rejects.toThrow("Result content is no longer available");
+  await expect(async () => {
+    for await (const _ of resource.chunks()) {
+    }
+  }).rejects.toThrow("Result content is no longer available");
+  await writeFile(path, RESULT);
+  expect(text(await resource.read())).toBe(RESULT);
+  const chunks = [];
+  for await (const chunk of resource.chunks()) chunks.push(chunk);
+  expect(text(Buffer.concat(chunks))).toBe(RESULT);
+});

@@ -12,6 +12,7 @@ Import these functions from `@astra-spec/sdk/node`:
 | `readInput(path, inputRef, options?)` | `Promise<Uint8Array \| undefined>` |
 | `readResult(path, resultId, options?)` | `Promise<Uint8Array \| undefined>` |
 | `readResults(path?, options?)` | `AsyncGenerator<ResultContent>` |
+| `resultResources(path?, options?)` | `AsyncGenerator<ResultResource>` |
 
 `path` is the analysis folder; the first three functions default to the current
 folder. `NodeSourceOptions` has `offline?: boolean` and `cacheDir?: string`.
@@ -26,6 +27,33 @@ one, omitting results with no content. This supports publication/resource builds
 without resolving the analysis again for every file or retaining all bytes in
 memory. Definitions come from one resolved plan; worktree bytes are read as the
 iterator advances, rather than captured as an atomic filesystem snapshot.
+
+Both batch APIs accept `filter?: (result: Result) => boolean`, applied before
+content lookup. `readResults` buffers one whole file per yielded item.
+`resultResources` instead yields `{ result, placeIndex, read, chunks }` handles:
+`read()` returns the whole file; `chunks()` yields `Uint8Array` chunks with
+backpressure. Handles remain usable after enumeration. Content lookup can read
+a small prefix to recognize large-file pointers, but full content is deferred.
+Worktree changes after enumeration are visible; deleting content can make a later
+read fail. Missing/unfetched content is omitted when enumerating, as in `readResults`.
+
+```ts
+import { resultResources } from "@astra-spec/sdk/node";
+
+for await (const resource of resultResources(folder, {
+  filter: result => result.output === "outputs.catalog",
+})) {
+  for await (const chunk of resource.chunks()) {
+    await destination.write(chunk);
+  }
+}
+```
+
+The Node provider streams ordinary files, available stand-in content and historical
+Git blobs without buffering whole files. Stopping iteration early closes the file
+or Git process. Custom providers may implement optional `Tree.chunks(path)` and
+`FollowedFile.chunks()`; without them, chunk iteration falls back to a whole-file
+read. Chunk boundaries are not part of the API contract.
 
 `offline` prevents remote/lazy object fetching. Git authentication follows the
 user's Git setup, with interactive password prompting disabled. The remote cache
@@ -51,7 +79,8 @@ resolve(source: AnalysisSource): Promise<ResolvedAnalysis>
 status(source: AnalysisSource): Promise<StatusReport>
 readInput(source: AnalysisSource, inputRef: string): Promise<Uint8Array | undefined>
 readResult(source: AnalysisSource, resultId: string, placeIndex?: number): Promise<Uint8Array | undefined>
-readResults(source: AnalysisSource): AsyncGenerator<ResultContent>
+readResults(source: AnalysisSource, options?: ResultReadOptions): AsyncGenerator<ResultContent>
+resultResources(source: AnalysisSource, options?: ResultReadOptions): AsyncGenerator<ResultResource>
 ```
 
 An `AnalysisSource` holds `reader`, `folder`, and `provider`. The public source

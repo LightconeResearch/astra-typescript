@@ -3,3 +3,4 @@ export * from "./types.js";
 export * from "./decode.js";
 export * from "./index-analysis.js";
 export * from "./selectors.js";
+export * from "./provenance.js";

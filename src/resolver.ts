@@ -84,22 +84,61 @@ export interface ResultContent {
   readonly placeIndex: number;
   readonly bytes: Uint8Array;
 }
-/** Stream available results from one resolved plan, using the first available place. */
-export async function* readResults(
+export interface ResultReadOptions {
+  /** Applied before looking up or reading content. */
+  readonly filter?: (result: Result) => boolean;
+}
+export interface ResultResource {
+  readonly result: Result;
+  readonly placeIndex: number;
+  read(): Promise<Uint8Array>;
+  chunks(): AsyncIterable<Uint8Array>;
+}
+/** Resolve once and yield lazy handles for the first available place of each result.
+ * Worktree content is read when a handle is consumed, not snapshotted. Custom
+ * providers without chunks() fall back to a whole-file read.
+ */
+export async function* resultResources(
   source: AnalysisSource,
-): AsyncGenerator<ResultContent> {
+  options: ResultReadOptions = {},
+): AsyncGenerator<ResultResource> {
   const resolved = await read(source);
   const stack = resolved.context.stack;
   for (const result of resolved.analysis.results) {
+    if (options.filter && !options.filter(result)) continue;
     const planned = resolved.planned.get(result.id)!;
     const reader = stack.analyses.get(planned.owner)!.reader;
     const locations = places(stack, planned);
     for (let placeIndex = 0; placeIndex < locations.length; placeIndex += 1) {
-      const bytes = await contentBytes(reader, locations[placeIndex]!.bytes);
-      if (bytes === undefined) continue;
-      yield { result, placeIndex, bytes };
+      const path = locations[placeIndex]!.bytes;
+      const found = await look(reader, path);
+      if (!found.here) continue;
+      const read = () => (found.file ? found.file.read() : reader.read(path));
+      yield {
+        result,
+        placeIndex,
+        read,
+        async *chunks() {
+          if (found.file?.chunks) yield* found.file.chunks();
+          else if (!found.file && reader.chunks) yield* reader.chunks(path);
+          else yield await read();
+        },
+      };
       break;
     }
+  }
+}
+/** Stream whole files from one resolved plan; use resultResources for chunked reads. */
+export async function* readResults(
+  source: AnalysisSource,
+  options: ResultReadOptions = {},
+): AsyncGenerator<ResultContent> {
+  for await (const resource of resultResources(source, options)) {
+    yield {
+      result: resource.result,
+      placeIndex: resource.placeIndex,
+      bytes: await resource.read(),
+    };
   }
 }
 /** Read actual input content; an unfetched stand-in has no bytes to return. */

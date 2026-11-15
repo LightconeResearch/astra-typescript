@@ -29,8 +29,9 @@ be built entirely from working-tree files. Driven subanalysis results belong to
 the driver's universes; results built once belong to their output's analysis.
 Pins can select results owned by another analysis or universe.
 
-Switches and inheritance instructions are applied internally. The report holds
-their consequences, not a complete authored graph. An output with no planned
+Switches and inheritance instructions are applied internally. `Result.inputs`
+holds effective dependencies; `Output.inputs` and `Analysis.switches` retain
+authored dependency edges, including unplanned branches. An output with no planned
 result is not necessarily inactive. Use the [graph helpers](reports.md#lookups-and-selections)
 to navigate the public model without parsing IDs.
 

@@ -11,6 +11,7 @@ export interface FollowedFile {
   readonly size: number;
   read(limit?: number): Promise<Uint8Array>;
   digest?(): Promise<Digest>;
+  chunks?(): AsyncIterable<Uint8Array>;
 }
 export interface Repository {
   readonly top: string;
@@ -41,6 +42,7 @@ export interface Tree {
     path: string,
   ): Promise<{ readonly reader: Tree; readonly path: string } | undefined>;
   digest?(path: string): Promise<Digest | undefined>;
+  chunks?(path: string): AsyncIterable<Uint8Array>;
 }
 export interface AnalysisSource {
   readonly reader: Tree;

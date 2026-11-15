@@ -86,7 +86,7 @@ local universe. Following result dependencies preserves both references.
 | `resultsByOutput` | Output ref to all its planned results, in report order |
 
 `IndexedElement` is discriminated by its `ElementCollection`: `inputs`,
-`outputs`, `decisions`, `prior_insights`, `findings`, or `universes`.
+`outputs`, `switches`, `decisions`, `prior_insights`, `findings`, or `universes`.
 
 | Helper | Behavior |
 | --- | --- |
@@ -97,6 +97,8 @@ local universe. Following result dependencies preserves both references.
 | `selectResult(index, outputRef, universeRef)` | For a known universe, select the exact result or fall back to that output's result built once |
 | `getSelectedOption(index, universeRef, decisionRef)` | Find the option in the universe's effective selection; absence remains `undefined` |
 | `walkResultDependencies(index, resultId)` | Depth-first walk of upstream results in input order, excluding the starting result and yielding each dependency once |
+| `traceResultProvenance(index, resultId)` | Decisions with selected options and terminal inputs, retaining effective universes and every dependency route |
+| `getEvidenceBindings(index, insightRef, evidenceIndex, universeRef?)` | Artifact evaluations, optionally filtered by evaluation universe while preserving explicit pins |
 | `getEvidence(index, insightRef, evidenceIndex)` | Find an item by its insight ref and zero-based evidence index |
 | `getEvidenceOutput(index, insightRef, evidenceIndex)` | Follow the item's authored address through its owner's declarations to a concrete output, even when it has no planned result |
 | `getCitedResults(index, insightRef, evidenceIndex)` | Return the item's cited results in citation order, including results from different universes |
@@ -107,18 +109,46 @@ terminates on cycles. It uses depth-first input order; the report's `results`
 array retains its dependency-first order.
 
 There is no implicit universe choice or inferred default option. A missing
-result does not establish that an output is inactive. Evidence citations are
-returned together: a switch can cite multiple results built once, and this
-report does not retain enough switch information to filter them by selected
-universe. `getEvidence` preserves the authored artifact address even when no
-results are cited.
+result does not establish that an output is inactive. `getCitedResults` returns
+all effective citations together for compatibility. `getEvidenceBindings` selects
+bindings by evaluation universe, including switches whose cases are built once.
+Explicitly pinned evidence and universe-independent bindings remain applicable
+regardless of the requested universe. It returns `undefined` for older reports
+without bindings or for DOI evidence; an empty array means no evaluation matched.
+
+Each binding has an optional `universe` (evaluation context), `output` (canonical
+concrete target), `target_universe` (effective context after pins), and `result`
+(planned result ID). A binding without an output records a switch taking no case.
+A target without a result is still useful for navigation. `cites` is the ordered
+unique list of result IDs from the bindings.
 
 `getEvidenceOutput` follows local output names and declaration chains in the
-insight's declaring analysis, including aliases back to the root. An optional
-`#universe` pin does not change the output's identity; use `getCitedResults` for
-the effective results. Unknown or malformed addresses return `undefined`.
-Switches are absent from the public model, so their original targets cannot be
-resolved by this helper; their effective citations remain available.
+insight's declaring analysis, including aliases back to the root. Its purpose is
+output identity: a `#universe` pin does not change that identity. It does not
+select switch cases; use bindings for those. Unknown or malformed addresses
+return `undefined`.
+
+`traceResultProvenance` includes the seed's decisions, then follows effective
+result inputs in depth-first order. Each decision occurrence includes its result,
+decision, effective universe and selected option (when present). Each terminal
+input occurrence includes its result and input. Both retain `route`, the ordered
+`{ result, source }` edges from the seed. Shared dependencies occur once per route;
+two pins never collapse into one decision. Cycles terminate by excluding results
+already on the current route. Consumers can group occurrences for display after
+tracing, without losing route or universe information.
+
+### Authored dependencies
+
+New reports also expose `Output.inputs` and `Analysis.switches`, including
+unplanned branches. They are optional for compatibility with older reports;
+new resolvers always emit them. An `AuthoredReference` contains `entry` (the
+address as written), `target` (canonical input/output/switch ref), and optional
+`universe` (the resolved pin). A `Switch` contains its canonical `ref`, `decision`
+ref and all `cases`, keyed by option ID. Switch refs use the `switches` collection
+and are indexed by `elementByRef`; switches are never concrete outputs or results.
+Use these edges for authored graphs and `Result.inputs` for effective execution
+provenance. A dependency's presence in the authored graph does not imply a result
+is planned or active in any particular universe.
 
 These helpers expect a semantically valid resolved report. Unknown lookups
 return `undefined` or an empty traversal/list; dangling references are skipped.

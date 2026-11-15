@@ -269,3 +269,35 @@ export function digestBlob(
     );
   });
 }
+
+/** Stream a historical blob, terminating Git when the consumer stops early. */
+export async function* streamBlob(
+  repo: Repository,
+  oid: string,
+  lazy = false,
+): AsyncGenerator<Uint8Array> {
+  const child = spawn("git", ["-C", repo.top, "cat-file", "blob", oid], {
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      ...(!lazy ? { GIT_NO_LAZY_FETCH: "1" } : {}),
+    },
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  // Resolve errors as values so an early process error cannot become an unhandled rejection.
+  const finished = new Promise<number | Error>((resolve) => {
+    child.on("error", resolve);
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+  try {
+    for await (const chunk of child.stdout) yield chunk as Buffer;
+    const code = await finished;
+    if (code !== 0)
+      throw new GitError(`git can't read blob ${oid}`, {
+        ...(code instanceof Error ? { cause: code } : {}),
+      });
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await finished;
+  }
+}

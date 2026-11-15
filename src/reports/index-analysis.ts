@@ -9,6 +9,7 @@ import type {
   ResolvedAnalysis,
   Result,
   Universe,
+  Switch,
 } from "./types.js";
 
 interface ElementTypes {
@@ -18,6 +19,7 @@ interface ElementTypes {
   prior_insights: Insight;
   findings: Insight;
   universes: Universe;
+  switches: Switch;
 }
 
 export type ElementCollection = keyof ElementTypes;
@@ -66,7 +68,7 @@ function add<T>(
 }
 
 const COLLECTIONS = [
-  "inputs", "outputs", "decisions", "prior_insights", "findings", "universes",
+  "inputs", "outputs", "decisions", "prior_insights", "findings", "universes", "switches",
 ] as const;
 
 /**
@@ -85,7 +87,7 @@ export function indexResolvedAnalysis(report: ResolvedAnalysis): ResolvedAnalysi
   for (const analysis of report.analyses) {
     add(analysisByKey, analysis.key, analysis, "DUPLICATE_ANALYSIS_KEY");
     for (const collection of COLLECTIONS) {
-      for (const element of analysis[collection]) {
+      for (const element of analysis[collection] ?? []) {
         // Membership in this collection establishes the correlated element type.
         const entry = { collection, analysis, element } as IndexedElement;
         add(elementByRef, element.ref, entry, "DUPLICATE_ELEMENT_REF");

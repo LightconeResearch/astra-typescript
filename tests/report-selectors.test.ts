@@ -10,6 +10,7 @@ import {
   getDeclaredAnalysis,
   getEvidence,
   getEvidenceOutput,
+  getEvidenceBindings,
   getResult,
   getResultOwner,
   getSelectedOption,
@@ -250,4 +251,17 @@ describe("evidence identity and citations", () => {
     const index = indexResolvedAnalysis(report);
     expect(getCitedResults(index, "findings.branches", 0).map((result) => result.id)).toEqual(["stale", "present"]);
   });
+});
+
+it("selects evidence bindings without dropping pinned citations", () => {
+  const index = indexResolvedAnalysis(fixture("switch-status"));
+  const evidence = getEvidence(index, "findings.branches", 0)!;
+  expect(evidence.bindings?.length).toBeGreaterThan(1);
+  for (const binding of evidence.bindings!) {
+    expect(getEvidenceBindings(index, "findings.branches", 0, binding.universe)).toEqual([binding]);
+  }
+  const pinned = getEvidence(index, "findings.branches", 1)!;
+  expect(pinned.artifact).toContain("#");
+  expect(getEvidenceBindings(index, "findings.branches", 1, "universes.other")).toEqual(pinned.bindings);
+  expect(getEvidenceBindings(index, "unknown", 0)).toBeUndefined();
 });

@@ -8,7 +8,11 @@ import type {
 } from "./reports/types.js";
 export { NodeSourceProvider } from "./sources/node.js";
 export type { NodeSourceOptions } from "./sources/node.js";
-export type { ResultContent } from "./resolver.js";
+export type {
+  ResultContent,
+  ResultResource,
+  ResultReadOptions,
+} from "./resolver.js";
 export {
   CacheError,
   GitError,
@@ -59,8 +63,17 @@ export async function readInput(
 /** Stream result bytes without resolving again for every resource. */
 export async function* readResults(
   path?: string,
-  options: NodeSourceOptions = {},
+  options: NodeSourceOptions & engine.ResultReadOptions = {},
 ): AsyncGenerator<engine.ResultContent> {
   const provider = new NodeSourceProvider(options);
-  yield* engine.readResults(await provider.worktree(path));
+  yield* engine.readResults(await provider.worktree(path), options);
+}
+
+/** Resolve once and open result content only when a handle is consumed. */
+export async function* resultResources(
+  path?: string,
+  options: NodeSourceOptions & engine.ResultReadOptions = {},
+): AsyncGenerator<engine.ResultResource> {
+  const provider = new NodeSourceProvider(options);
+  yield* engine.resultResources(await provider.worktree(path), options);
 }

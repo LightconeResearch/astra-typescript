@@ -235,6 +235,12 @@ assert.equal((await native.status(project, options)).statuses.result.state, "unc
 assert.equal(new TextDecoder().decode(await native.readResult(project, "result", options)), bytes);
 const contents = [];
 for await (const content of native.readResults(project, options)) contents.push(content);
+const resources = [];
+for await (const resource of native.resultResources(project, options)) resources.push(resource);
+assert.equal(resources.length, 1);
+const chunks = [];
+for await (const chunk of resources[0].chunks()) chunks.push(chunk);
+assert.equal(Buffer.concat(chunks).toString(), bytes);
 assert.equal(contents.length, 1);
 assert.equal(contents[0].result.id, "result");
 assert.equal(new TextDecoder().decode(contents[0].bytes), bytes);
@@ -254,12 +260,13 @@ assert.equal((await resolver.status(source)).statuses.result.state, "unchanged")
   await writeFile(
     join(temporary, "consumer.mts"),
     `
-import { parseResolvedAnalysis, parseStatusReport, indexResolvedAnalysis, selectResult, type ResolvedAnalysis } from "@astra-spec/sdk/reports";
-import { resolve, validate, status, readInput, readResult, ASTRA_SPEC_VERSION } from "@astra-spec/sdk";
+import { parseResolvedAnalysis, parseStatusReport, indexResolvedAnalysis, selectResult, traceResultProvenance, getEvidenceBindings, type ResolvedAnalysis } from "@astra-spec/sdk/reports";
+import { resolve, validate, status, readInput, readResult, resultResources, ASTRA_SPEC_VERSION } from "@astra-spec/sdk";
 import { resolve as resolveFromProvider, type AnalysisSource } from "@astra-spec/sdk/resolver";
 declare const candidate: unknown; declare const source: AnalysisSource;
 const analysis: ResolvedAnalysis = parseResolvedAnalysis(candidate);
 const index = indexResolvedAnalysis(analysis);
+void [traceResultProvenance(index, "result"), getEvidenceBindings(index, "findings.f", 0), resultResources(source)];
 const version: "astra-tools.resolved-analysis.v1" = analysis.schema_version;
 const state: string | undefined = parseStatusReport(candidate).statuses.result?.state;
 const opened: Promise<ResolvedAnalysis> = resolve(source);

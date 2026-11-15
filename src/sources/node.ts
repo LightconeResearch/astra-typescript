@@ -25,6 +25,7 @@ import {
   digestBlob,
   git,
   readBlob,
+  streamBlob,
   readGitmodules,
 } from "./git.js";
 import { CacheError, NoAnalysisError, UnreachableError } from "./errors.js";
@@ -55,20 +56,25 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 async function digestFile(path: string): Promise<Digest> {
-  const handle = await open(path, "r");
   const hash = createHash("sha256");
   let size = 0;
+  for await (const chunk of fileChunks(path)) {
+    hash.update(chunk);
+    size += chunk.length;
+  }
+  return { content_hash: `sha256:${hash.digest("hex")}`, size };
+}
+async function* fileChunks(path: string): AsyncGenerator<Uint8Array> {
+  const file = await open(path, "r");
   try {
-    const chunk = Buffer.alloc(1 << 20);
     for (;;) {
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
-      if (!bytesRead) break;
-      hash.update(chunk.subarray(0, bytesRead));
-      size += bytesRead;
+      const buffer = Buffer.alloc(1 << 20);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, null);
+      if (!bytesRead) return;
+      yield buffer.subarray(0, bytesRead);
     }
-    return { content_hash: `sha256:${hash.digest("hex")}`, size };
   } finally {
-    await handle.close();
+    await file.close();
   }
 }
 async function readFile(path: string, limit?: number): Promise<Uint8Array> {
@@ -102,10 +108,7 @@ export class WorktreeTree implements Tree {
     string,
     Promise<Map<string, EntryKind> | undefined>
   >();
-  constructor(
-    readonly top: string,
-    readonly repo?: Repository,
-  ) {
+  constructor(readonly top: string, readonly repo?: Repository) {
     this.id = `worktree:${top}`;
   }
   private async entries(
@@ -155,6 +158,10 @@ export class WorktreeTree implements Tree {
     if ((await this.stat(path))?.kind !== "file") throw noFile(path);
     return readFile(nativeJoin(this.top, path), limit);
   }
+  async *chunks(path: string): AsyncGenerator<Uint8Array> {
+    if ((await this.stat(path))?.kind !== "file") throw noFile(path);
+    yield* fileChunks(nativeJoin(this.top, path));
+  }
   async digest(path: string): Promise<Digest | undefined> {
     return (await this.stat(path))?.kind === "file"
       ? digestFile(nativeJoin(this.top, path))
@@ -170,6 +177,7 @@ export class WorktreeTree implements Tree {
             size: info.size,
             read: (limit) => readFile(target, limit),
             digest: () => digestFile(target),
+            chunks: () => fileChunks(target),
           }
         : undefined;
     } catch (error) {
@@ -385,6 +393,11 @@ export class CommitTree implements Tree {
           ).toString("utf8"),
         }
       : { kind };
+  }
+  async *chunks(path: string): AsyncGenerator<Uint8Array> {
+    const found = await this.found(path);
+    if (!found || !found.mode.startsWith("100")) throw noFile(path);
+    yield* streamBlob(found.reader.repo, found.oid, !this.provider.offline);
   }
   async digest(path: string): Promise<Digest | undefined> {
     const found = await this.found(path);

@@ -1,7 +1,7 @@
 /** Lookups over resolved reports, including retained scoped evidence addresses. */
 
 import type { ResolvedAnalysisIndex } from "./index-analysis.js";
-import type { Analysis, Evidence, Option, Output, Result } from "./types.js";
+import type { Analysis, Evidence, EvidenceBinding, Option, Output, Result } from "./types.js";
 
 /** Follow one declaration, retaining aliases and the root's empty key. */
 export function getDeclaredAnalysis(
@@ -150,7 +150,7 @@ export function getEvidenceOutput(
   return found?.collection === "outputs" ? found.element : undefined;
 }
 
-/** All effective citations in citation order; switches cannot be filtered by universe here. */
+/** All effective citations in citation order; use getEvidenceBindings for contextual selection. */
 export function getCitedResults(
   index: ResolvedAnalysisIndex,
   insightRef: string,
@@ -162,4 +162,20 @@ export function getCitedResults(
     if (result) cited.push(result);
   }
   return cited;
+}
+
+/**
+ * Bindings for an evaluation universe, retaining universe-independent and explicitly
+ * pinned evidence. Omit universeRef for every evaluation. Undefined means the report
+ * has no binding information (older reports or DOI evidence), not an empty selection.
+ */
+export function getEvidenceBindings(
+  index: ResolvedAnalysisIndex,
+  insightRef: string,
+  evidenceIndex: number,
+  universeRef?: string,
+): readonly EvidenceBinding[] | undefined {
+  const evidence = getEvidence(index, insightRef, evidenceIndex);
+  if (universeRef === undefined || evidence?.artifact?.includes("#")) return evidence?.bindings;
+  return evidence?.bindings?.filter(binding => binding.universe === undefined || binding.universe === universeRef);
 }

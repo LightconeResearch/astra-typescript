@@ -4,14 +4,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   readInput,
   readResult,
   readResults,
+  resultResources,
+  NodeSourceProvider,
   resolve,
   status,
 } from "../src/node.js";
+import { resultResources as resourcesFromSource } from "../src/resolver.js";
 import { digestBytes } from "../src/sources/standins.js";
 
 let root: string;
@@ -191,7 +194,9 @@ universes:
       join(driver, "astra.yaml"),
       `spec_version: "0.1.0"
 analyses:
-  old: {url: ${JSON.stringify(pathToFileURL(root).href)}, commit: "${historical}"}
+  old: {url: ${JSON.stringify(
+    pathToFileURL(root).href,
+  )}, commit: "${historical}"}
 outputs:
   summary:
     type: report
@@ -318,4 +323,75 @@ outputs:
     expect(contents[0]?.result.id).toBe(imported.id);
     expect(text(contents[0]?.bytes)).toBe(RESULT);
   });
+});
+
+it("filters lazy resources before content access and streams worktree and historical bytes", async () => {
+  await setup();
+  await mkdir(join(root, "results"));
+  const payload = Buffer.alloc(3 * (1 << 20) + 17, 37);
+  await writeFile(join(root, "results/result.txt"), payload);
+  const handles = [];
+  for await (const resource of resultResources(root)) handles.push(resource);
+  expect(handles).toHaveLength(1);
+  // The handle is lazy and usable after enumeration ends.
+  payload[0] = 99;
+  await writeFile(join(root, "results/result.txt"), payload);
+  const chunks = [];
+  for await (const chunk of handles[0]!.chunks()) chunks.push(chunk);
+  expect(chunks.length).toBeGreaterThan(1);
+  expect(Buffer.compare(Buffer.concat(chunks), payload)).toBe(0);
+  expect(Buffer.compare(Buffer.from(await handles[0]!.read()), payload)).toBe(
+    0,
+  );
+  for await (const chunk of handles[0]!.chunks()) {
+    expect(chunk.length).toBeLessThan(payload.length);
+    break;
+  }
+  const omitted = [];
+  for await (const content of readResults(root, { filter: () => false }))
+    omitted.push(content);
+  expect(omitted).toEqual([]);
+  git("add", "--all");
+  git("commit", "--quiet", "--message", "large result");
+  const provider = new NodeSourceProvider({ offline: true });
+  const source = await provider.worktree(root);
+  const tree = await provider.atCommit(
+    source.reader.repo!,
+    git("rev-parse", "HEAD"),
+  );
+  await writeFile(join(root, "results/result.txt"), "changed worktree");
+  const historical = [];
+  for await (const chunk of tree.chunks!("results/result.txt"))
+    historical.push(chunk);
+  expect(historical.length).toBeGreaterThan(1);
+  expect(Buffer.compare(Buffer.concat(historical), payload)).toBe(0);
+  for await (const chunk of tree.chunks!("results/result.txt")) {
+    expect(chunk.length).toBeLessThan(payload.length);
+    break;
+  }
+  await expect(async () => {
+    for await (const _ of tree.chunks!("missing")) {
+    }
+  }).rejects.toThrow();
+});
+
+it("does not read filtered content or buffer files while enumerating handles", async () => {
+  await setup();
+  await mkdir(join(root, "results"));
+  await writeFile(join(root, "results/result.txt"), RESULT);
+  const source = await new NodeSourceProvider().worktree(root);
+  const reads = vi.spyOn(source.reader, "read");
+  for await (const _ of resourcesFromSource(source, { filter: () => false })) {}
+  expect(reads.mock.calls.filter(([path]) => path === "results/result.txt")).toEqual([]);
+  reads.mockClear();
+  const resources = [];
+  for await (const resource of resourcesFromSource(source)) resources.push(resource);
+  expect(resources).toHaveLength(1);
+  expect(reads.mock.calls.filter(([path]) => path === "results/result.txt").every(([, limit]) => limit !== undefined)).toBe(true);
+  // Older custom source providers remain usable without a streaming implementation.
+  source.reader.chunks = undefined;
+  const chunks = [];
+  for await (const chunk of resources[0]!.chunks()) chunks.push(chunk);
+  expect(text(Buffer.concat(chunks))).toBe(RESULT);
+  reads.mockRestore();
 });

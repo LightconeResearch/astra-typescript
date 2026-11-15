@@ -2,6 +2,9 @@
 import type {
   ResolvedAnalysis,
   Analysis,
+  AuthoredReference,
+  EvidenceBinding,
+  Switch,
   Commit,
   Output,
   Universe,
@@ -144,7 +147,11 @@ class Builder {
     this.stack = context.stack;
   }
   ref(e: Element): string {
-    return ref(this.keys.get(e.analysis)!, `${e.kind}s`, e.id);
+    return ref(
+      this.keys.get(e.analysis)!,
+      e.kind === "switch" ? "switches" : `${e.kind}s`,
+      e.id,
+    );
   }
   commit(identity: Identity): Commit | undefined {
     if (identity.commit === this.stack.root.commit) return undefined;
@@ -211,6 +218,9 @@ class Builder {
       ),
       findings: this.insights(identity, "findings", a.findings),
       universes: ownUniverses(s, identity).map((u) => this.universe(u)),
+      switches: Object.entries(a.outputs)
+        .filter(([, o]) => isSwitch(o))
+        .map(([id]) => this.switch(s.element(identity, "switch", id))),
     });
   }
   output(e: Element): Output {
@@ -223,6 +233,9 @@ class Builder {
       description: o.description,
       tags: o.tags,
       resources: o.recipe?.resources,
+      inputs: (this.context.written.get(e) ?? [])
+        .filter((x) => x.field === "inputs")
+        .map((x) => this.reference(x)),
       decisions: [
         ...new Set(
           (this.context.written.get(e) ?? [])
@@ -231,6 +244,24 @@ class Builder {
         ),
       ],
     });
+  }
+  reference(entry: Resolution): AuthoredReference {
+    const pin = this.context.pins.get(entry);
+    return defined({
+      entry: entry.written,
+      target: this.ref(entry.element!),
+      universe: pin && this.ref(pin),
+    });
+  }
+  switch(element: Element): Switch {
+    const sw = this.stack.switches.get(element)!;
+    return {
+      ref: this.ref(element),
+      decision: this.ref(sw.decision.element!),
+      cases: Object.fromEntries(
+        [...sw.cases].map(([option, entry]) => [option, this.reference(entry)]),
+      ),
+    };
   }
   universe(e: Element): Universe {
     const o = this.stack.analysis(e.analysis).universes[e.id]!,
@@ -259,26 +290,33 @@ class Builder {
             ? ("finding" as const)
             : ("prior_insight" as const),
         claim: e.claim,
-        evidence: e.evidence.map(
-          (v, i): Evidence =>
-            defined({
-              doi: v.doi,
-              version: v.version,
-              cites:
-                v.artifact === undefined
-                  ? undefined
-                  : this.cited(identity, [
-                      collection,
-                      id,
-                      "evidence",
-                      i,
-                      "artifact",
-                    ]),
-              quote: v.quote,
-              location: v.location,
-              artifact: v.artifact,
-            }),
-        ),
+        evidence: e.evidence.map((v, i): Evidence => {
+          const bindings =
+            v.artifact === undefined
+              ? undefined
+              : this.bindings(identity, [
+                  collection,
+                  id,
+                  "evidence",
+                  i,
+                  "artifact",
+                ]);
+          return defined({
+            doi: v.doi,
+            version: v.version,
+            quote: v.quote,
+            location: v.location,
+            artifact: v.artifact,
+            bindings,
+            cites: bindings && [
+              ...new Set(
+                bindings.flatMap((b) =>
+                  b.result === undefined ? [] : [b.result],
+                ),
+              ),
+            ],
+          });
+        }),
         label: e.label,
         description: e.description,
         scope: e.scope,
@@ -286,7 +324,7 @@ class Builder {
       }),
     );
   }
-  cited(identity: Identity, pointer: Pointer): string[] {
+  bindings(identity: Identity, pointer: Pointer): EvidenceBinding[] {
     const entry = this.stack.resolutions.find(
       (e) =>
         e.field === "artifact" &&
@@ -294,22 +332,22 @@ class Builder {
         JSON.stringify(e.pointer) === JSON.stringify(pointer),
     )!;
     const e = entry.element!;
-    const universes: readonly (Element | undefined)[] =
+    const universes =
       entry.pin === undefined &&
       (e.kind === "switch" || this.context.perUniverse.has(e))
         ? ownUniverses(this.stack, this.stack.root)
-        : [undefined];
-    const found = new Set<string>();
-    for (const u of universes) {
+        : [this.context.pins.get(entry)];
+    return universes.map((u) => {
       const through = this.context.meaning.through(entry, u);
-      if (through) {
-        const id = this.ids.get(
-          this.stack.at(through.target, through.universe),
-        );
-        if (id !== undefined) found.add(id);
-      }
-    }
-    return [...found];
+      return defined({
+        universe: u && this.ref(u),
+        output: through && this.ref(through.target),
+        target_universe: through?.universe && this.ref(through.universe),
+        result:
+          through &&
+          this.ids.get(this.stack.at(through.target, through.universe)),
+      });
+    });
   }
   result(planned: Planned): Result {
     const s = this.stack,

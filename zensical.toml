@@ -1,10 +1,10 @@
 [project]
 site_name = "ASTRA TypeScript SDK"
-site_url = "https://lightconeresearch.github.io/astra-typescript/"
+site_url = "https://astra-project.github.io/astra-typescript/"
 site_description = "Validate ASTRA projects and open them as resolved TypeScript data"
 site_author = "Lightcone Research"
-repo_url = "https://github.com/LightconeResearch/astra-typescript"
-repo_name = "LightconeResearch/astra-typescript"
+repo_url = "https://github.com/astra-project/astra-typescript"
+repo_name = "astra-project/astra-typescript"
 edit_uri = "edit/main/docs/"
 copyright = "&copy; 2026 Lightcone Research"
 docs_dir = "docs"

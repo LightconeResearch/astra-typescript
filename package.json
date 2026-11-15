@@ -61,10 +61,10 @@
     "linkml",
     "scientific-computing"
   ],
-  "homepage": "https://lightconeresearch.github.io/astra-typescript/",
+  "homepage": "https://astra-project.github.io/astra-typescript/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/LightconeResearch/astra-typescript"
+    "url": "https://github.com/astra-project/astra-typescript"
   },
   "dependencies": {
     "ajv": "^8.17.1",

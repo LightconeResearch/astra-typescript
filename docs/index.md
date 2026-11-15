@@ -28,4 +28,4 @@ schemas, rules, and conformance cases come from a pinned astra-spec submodule.
 Python is an explicit development/CI oracle, not a runtime dependency.
 
 This checkout prepares 0.2.0-rc.1. Build an npm tarball with `npm pack` to test the
-candidate before publication; see the [repository instructions](https://github.com/LightconeResearch/astra-typescript#development-and-conformance).
+candidate before publication; see the [repository instructions](https://github.com/astra-project/astra-typescript#development-and-conformance).

@@ -63,7 +63,7 @@ and [report contract](docs/reports.md) guides.
 ## Development and conformance
 
 ```bash
-git clone --recurse-submodules https://github.com/LightconeResearch/astra-typescript.git
+git clone --recurse-submodules https://github.com/astra-project/astra-typescript.git
 cd astra-typescript
 npm ci
 npm run reports:check

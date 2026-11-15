@@ -9,6 +9,7 @@ import {
   getCitedResults,
   getDeclaredAnalysis,
   getEvidence,
+  getEvidenceOutput,
   getResult,
   getResultOwner,
   getSelectedOption,
@@ -185,7 +186,47 @@ describe("evidence identity and citations", () => {
     expect(getCitedResults(index, "findings.branches", 1).map((result) => result.id)).toEqual(["present"]);
     expect(getEvidence(index, "findings.branches", 2)?.artifact).toBe("dormant");
     expect(getCitedResults(index, "findings.branches", 2)).toEqual([]);
+    expect(getEvidenceOutput(index, "findings.branches", 2)).toBe(index.elementByRef.get("outputs.dormant")?.element);
+    expect(getEvidenceOutput(index, "findings.branches", 0)).toBeUndefined();
     expect(getCitedResults(index, "unknown", 0)).toEqual([]);
+  });
+
+  it("resolves concrete authored targets through aliases, parent cycles and optional pins", () => {
+    const original = fixture();
+    const withAlias = replaceAnalysis(original, "", (root) => ({
+      ...root, declares: { ...root.declares, alias: "stage", constructor: "stage" },
+    }));
+    const report = replaceAnalysis(withAlias, "stage", (stage) => ({
+      ...stage,
+      findings: [{
+        ...original.analyses[0]!.findings[0]!, ref: "stage.findings.scoped",
+        evidence: ["fit", "parent.shared", "parent.alias.fit#local", "parent.constructor.parent.alias.fit"].map((artifact) => ({ artifact, cites: [] })),
+      }],
+    }));
+    const index = indexResolvedAnalysis(report);
+    const fit = index.elementByRef.get("stage.outputs.fit")?.element;
+    expect(getEvidenceOutput(index, "findings.fit", 0)).toBe(fit);
+    expect(getEvidenceOutput(index, "findings.fit", 1)).toBe(fit);
+    expect(getEvidenceOutput(index, "stage.findings.scoped", 0)).toBe(fit);
+    expect(getEvidenceOutput(index, "stage.findings.scoped", 1)).toBe(index.elementByRef.get("outputs.shared")?.element);
+    expect(getEvidenceOutput(index, "stage.findings.scoped", 2)).toBe(fit);
+    expect(getEvidenceOutput(index, "stage.findings.scoped", 3)).toBe(fit);
+  });
+
+  it("leaves malformed addresses, missing outputs and non-artifact evidence unresolved", () => {
+    const original = fixture();
+    const targets = ["", "stage..fit", ".stage.fit", "stage.fit.", "stage.fit#", "stage.fit#local#again", "stage.fit#Bad", "stage.fit\n", "stage.fit#local\n", "Stage.fit", "stage.fit-bad", "stage:fit", "missing.fit", "outputs.shared", "seed", "stage.method"];
+    const report = replaceAnalysis(original, "", (root) => ({
+      ...root,
+      findings: [{ ...root.findings[0]!, evidence: [...targets.map((artifact) => ({ artifact })), { doi: "10.1234/example" }] }],
+    }));
+    const index = indexResolvedAnalysis(report);
+    for (let position = 0; position <= targets.length; position += 1) {
+      expect(getEvidenceOutput(index, "findings.fit", position)).toBeUndefined();
+    }
+    expect(getEvidenceOutput(index, "unknown", 0)).toBeUndefined();
+    expect(getEvidenceOutput(index, "outputs.shared", 0)).toBeUndefined();
+    expect(getEvidenceOutput(index, "findings.fit", -1)).toBeUndefined();
   });
 
   it("also exposes prior insights and DOI evidence without inventing result citations", () => {

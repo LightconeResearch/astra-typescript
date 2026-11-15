@@ -1,7 +1,7 @@
-/** Lookups over resolved reports; no authored address parsing or semantic resolution. */
+/** Lookups over resolved reports, including retained scoped evidence addresses. */
 
 import type { ResolvedAnalysisIndex } from "./index-analysis.js";
-import type { Analysis, Evidence, Option, Result } from "./types.js";
+import type { Analysis, Evidence, Option, Output, Result } from "./types.js";
 
 /** Follow one declaration, retaining aliases and the root's empty key. */
 export function getDeclaredAnalysis(
@@ -119,6 +119,35 @@ export function getEvidence(
   const insight = index.elementByRef.get(insightRef);
   if (insight?.collection !== "prior_insights" && insight?.collection !== "findings") return undefined;
   return insight.element.evidence[evidenceIndex];
+}
+
+/** Follow an authored evidence address to a concrete output, even without a planned result. */
+export function getEvidenceOutput(
+  index: ResolvedAnalysisIndex,
+  insightRef: string,
+  evidenceIndex: number,
+): Output | undefined {
+  const artifact = getEvidence(index, insightRef, evidenceIndex)?.artifact;
+  // Report decoders do not validate authored address grammar. Require a whole
+  // reference; in particular, a trailing newline must not pass the `$` anchor.
+  if (
+    !artifact ||
+    artifact.match(
+      /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*(?:#[a-z][a-z0-9_]*)?$/,
+    )?.[0] !== artifact
+  )
+    return undefined;
+  let analysis = index.elementByRef.get(insightRef)?.analysis;
+  const segments = artifact.split("#", 1)[0]!.split(".");
+  const id = segments.pop()!;
+  for (const declaration of segments) {
+    analysis = analysis && getDeclaredAnalysis(index, analysis.key, declaration);
+    if (!analysis) return undefined;
+  }
+  if (!analysis) return undefined;
+  const ref = `${analysis.key ? `${analysis.key}.` : ""}outputs.${id}`;
+  const found = index.elementByRef.get(ref);
+  return found?.collection === "outputs" ? found.element : undefined;
 }
 
 /** All effective citations in citation order; switches cannot be filtered by universe here. */

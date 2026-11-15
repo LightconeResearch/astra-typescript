@@ -98,6 +98,7 @@ local universe. Following result dependencies preserves both references.
 | `getSelectedOption(index, universeRef, decisionRef)` | Find the option in the universe's effective selection; absence remains `undefined` |
 | `walkResultDependencies(index, resultId)` | Depth-first walk of upstream results in input order, excluding the starting result and yielding each dependency once |
 | `getEvidence(index, insightRef, evidenceIndex)` | Find an item by its insight ref and zero-based evidence index |
+| `getEvidenceOutput(index, insightRef, evidenceIndex)` | Follow the item's authored address through its owner's declarations to a concrete output, even when it has no planned result |
 | `getCitedResults(index, insightRef, evidenceIndex)` | Return the item's cited results in citation order, including results from different universes |
 
 Analysis traversal retains the original `declares` maps, including repeated
@@ -111,6 +112,13 @@ returned together: a switch can cite multiple results built once, and this
 report does not retain enough switch information to filter them by selected
 universe. `getEvidence` preserves the authored artifact address even when no
 results are cited.
+
+`getEvidenceOutput` follows local output names and declaration chains in the
+insight's declaring analysis, including aliases back to the root. An optional
+`#universe` pin does not change the output's identity; use `getCitedResults` for
+the effective results. Unknown or malformed addresses return `undefined`.
+Switches are absent from the public model, so their original targets cannot be
+resolved by this helper; their effective citations remain available.
 
 These helpers expect a semantically valid resolved report. Unknown lookups
 return `undefined` or an empty traversal/list; dangling references are skipped.

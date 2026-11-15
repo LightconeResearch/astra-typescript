@@ -233,6 +233,11 @@ await writeFile(join(project, ".astra/records/result.json"), JSON.stringify({
 assert.deepEqual((await native.status(project, options)).statuses.result.bytes, { state: "present" });
 assert.equal((await native.status(project, options)).statuses.result.state, "unchanged");
 assert.equal(new TextDecoder().decode(await native.readResult(project, "result", options)), bytes);
+const contents = [];
+for await (const content of native.readResults(project, options)) contents.push(content);
+assert.equal(contents.length, 1);
+assert.equal(contents[0].result.id, "result");
+assert.equal(new TextDecoder().decode(contents[0].bytes), bytes);
 assert.equal(new TextDecoder().decode(await native.readInput(project, "inputs.raw", options)), "input\\n");
 const provider = new native.NodeSourceProvider(options); const source = await provider.worktree(project);
 assert.deepEqual(await sdk.resolve(source), await resolver.resolve(source));

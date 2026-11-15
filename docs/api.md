@@ -11,12 +11,21 @@ Import these functions from `@astra-spec/sdk/node`:
 | `status(path?, options?)` | `Promise<StatusReport>` |
 | `readInput(path, inputRef, options?)` | `Promise<Uint8Array \| undefined>` |
 | `readResult(path, resultId, options?)` | `Promise<Uint8Array \| undefined>` |
+| `readResults(path?, options?)` | `AsyncGenerator<ResultContent>` |
 
 `path` is the analysis folder; the first three functions default to the current
 folder. `NodeSourceOptions` has `offline?: boolean` and `cacheDir?: string`.
 `readResult` also accepts `placeIndex?: number`, defaulting to zero. A missing
 resource, unknown ref/result, unfetched stand-in, or absent place returns
 `undefined`. Invalid negative/noninteger place indices throw `RangeError`.
+
+`readResults` validates and resolves once, then streams available content in
+resolved-result order. Each item is `{ result: Result, placeIndex: number,
+bytes: Uint8Array }`. It tries places in order and yields the first available
+one, omitting results with no content. This supports publication/resource builds
+without resolving the analysis again for every file or retaining all bytes in
+memory. Definitions come from one resolved plan; worktree bytes are read as the
+iterator advances, rather than captured as an atomic filesystem snapshot.
 
 `offline` prevents remote/lazy object fetching. Git authentication follows the
 user's Git setup, with interactive password prompting disabled. The remote cache
@@ -42,6 +51,7 @@ resolve(source: AnalysisSource): Promise<ResolvedAnalysis>
 status(source: AnalysisSource): Promise<StatusReport>
 readInput(source: AnalysisSource, inputRef: string): Promise<Uint8Array | undefined>
 readResult(source: AnalysisSource, resultId: string, placeIndex?: number): Promise<Uint8Array | undefined>
+readResults(source: AnalysisSource): AsyncGenerator<ResultContent>
 ```
 
 An `AnalysisSource` holds `reader`, `folder`, and `provider`. The public source

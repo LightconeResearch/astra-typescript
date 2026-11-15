@@ -8,6 +8,7 @@ import type {
 } from "./reports/types.js";
 export { NodeSourceProvider } from "./sources/node.js";
 export type { NodeSourceOptions } from "./sources/node.js";
+export type { ResultContent } from "./resolver.js";
 export {
   CacheError,
   GitError,
@@ -54,4 +55,12 @@ export async function readInput(
 ): Promise<Uint8Array | undefined> {
   const provider = new NodeSourceProvider(options);
   return engine.readInput(await provider.worktree(path), inputRef);
+}
+/** Stream result bytes without resolving again for every resource. */
+export async function* readResults(
+  path?: string,
+  options: NodeSourceOptions = {},
+): AsyncGenerator<engine.ResultContent> {
+  const provider = new NodeSourceProvider(options);
+  yield* engine.readResults(await provider.worktree(path));
 }

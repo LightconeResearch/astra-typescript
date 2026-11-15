@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import { readInput, readResult, resolve, status } from "../src/node.js";
+import {
+  readInput,
+  readResult,
+  readResults,
+  resolve,
+  status,
+} from "../src/node.js";
 import { digestBytes } from "../src/sources/standins.js";
 
 let root: string;
@@ -83,6 +89,93 @@ async function record(commit: string): Promise<void> {
 }
 
 describe("native status and resources", () => {
+  it("streams one resolved plan while skipping missing resources", async () => {
+    await setup();
+    await writeFile(
+      join(root, "astra.yaml"),
+      DOCUMENT +
+        `
+  second:
+    type: data
+    format: txt
+    recipe: {command: 'second > {output}'}
+  unavailable:
+    type: data
+    format: txt
+    recipe: {command: 'unavailable > {output}'}
+`,
+    );
+    await mkdir(join(root, "results"));
+    await writeFile(join(root, "results/result.txt"), RESULT);
+    await writeFile(join(root, "results/second.txt"), "second bytes\n");
+    const stream = readResults(root);
+    const first = await stream.next();
+    expect(first.value?.result.id).toBe("result");
+    expect(text(first.value?.bytes)).toBe(RESULT);
+    // A streaming consumer can await between resources. The next item must
+    // use the already resolved definitions, rather than reopen the analysis.
+    await writeFile(join(root, "astra.yaml"), "spec_version: invalid\n");
+    const second = await stream.next();
+    expect(second.value?.result.id).toBe("second");
+    expect(text(second.value?.bytes)).toBe("second bytes\n");
+    expect((await stream.next()).done).toBe(true);
+  });
+
+  it("streams an aliased result once from its later available place", async () => {
+    git("init", "--quiet");
+    await mkdir(join(root, "stage"));
+    await writeFile(
+      join(root, "stage/astra.yaml"),
+      `spec_version: "0.1.0"
+label: Shared stage
+decisions:
+  method: {options: {a: {}}}
+  other: {options: {a: {}}}
+outputs:
+  fit:
+    type: metric
+    format: json
+    decisions: [method, other]
+    recipe: {command: 'fit {decisions.method} {decisions.other} > {output}'}
+`,
+    );
+    await writeFile(
+      join(root, "astra.yaml"),
+      `spec_version: "0.1.0"
+analyses:
+  stage: {path: stage}
+  alias: {path: stage}
+outputs:
+  comparison:
+    type: report
+    format: txt
+    inputs: [stage.fit, alias.fit]
+    recipe: {command: 'cat {inputs} > {output}'}
+universes:
+  baseline:
+    decisions: {stage.method: a, alias.other: a}
+`,
+    );
+    git("add", "--all");
+    git("commit", "--quiet", "--message", "aliases");
+    const report = await resolve(root);
+    const output = report.analyses.find(
+      (item) => item.label === "Shared stage",
+    )!.outputs[0]!;
+    const result = report.results.find((item) => item.output === output.ref)!;
+    expect(result.places).toHaveLength(2);
+    const available = join(root, result.places[1]!.file_path);
+    await mkdir(dirname(available), { recursive: true });
+    await writeFile(available, '{"value":7}');
+    const contents = [];
+    for await (const content of readResults(root)) contents.push(content);
+    expect(contents).toHaveLength(1);
+    expect(contents[0]).toMatchObject({
+      result: { id: result.id },
+      placeIndex: 1,
+    });
+    expect(text(contents[0]!.bytes)).toBe('{"value":7}');
+  });
   it("resolves SHA-256 repositories locally and imports their recorded results through a remote cache", async () => {
     const sourceCommit = await setup("sha256");
     expect(sourceCommit).toHaveLength(64);
@@ -218,5 +311,11 @@ outputs:
     expect(text(await readInput(join(root, "driver"), "old.inputs.raw"))).toBe(
       INPUT,
     );
+    const contents = [];
+    for await (const content of readResults(join(root, "driver")))
+      contents.push(content);
+    expect(contents).toHaveLength(1);
+    expect(contents[0]?.result.id).toBe(imported.id);
+    expect(text(contents[0]?.bytes)).toBe(RESULT);
   });
 });

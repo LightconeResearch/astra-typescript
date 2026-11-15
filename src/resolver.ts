@@ -2,6 +2,7 @@
 import type { AnalysisSource, Tree } from "./sources/types.js";
 import type {
   ResolvedAnalysis,
+  Result,
   StatusReport,
   ValidationReport,
 } from "./reports/types.js";
@@ -76,6 +77,30 @@ export async function readResult(
     resolved.context.stack.analyses.get(planned.owner)!.reader,
     place.bytes,
   );
+}
+/** Available result content from one place, retaining its resolved identity. */
+export interface ResultContent {
+  readonly result: Result;
+  readonly placeIndex: number;
+  readonly bytes: Uint8Array;
+}
+/** Stream available results from one resolved plan, using the first available place. */
+export async function* readResults(
+  source: AnalysisSource,
+): AsyncGenerator<ResultContent> {
+  const resolved = await read(source);
+  const stack = resolved.context.stack;
+  for (const result of resolved.analysis.results) {
+    const planned = resolved.planned.get(result.id)!;
+    const reader = stack.analyses.get(planned.owner)!.reader;
+    const locations = places(stack, planned);
+    for (let placeIndex = 0; placeIndex < locations.length; placeIndex += 1) {
+      const bytes = await contentBytes(reader, locations[placeIndex]!.bytes);
+      if (bytes === undefined) continue;
+      yield { result, placeIndex, bytes };
+      break;
+    }
+  }
 }
 /** Read actual input content; an unfetched stand-in has no bytes to return. */
 export async function readInput(

@@ -68,7 +68,7 @@ The first four errors are exported by the root and `/node`; report errors and
 helpers are exported by the root and `/reports`.
 
 Numeric fields use JavaScript `number`, with its finite precision. Integers
-larger than 2^53-1 cannot be represented exactly. This is the normal JSON/number
+larger than 2^53-1 may lose precision. This is the normal JSON/number
 boundary in TypeScript; the Python model permits arbitrary-size integers.
 
 ## Breaking changes from SDK 0.1

@@ -7,6 +7,10 @@ browser-backed integrations through the same small storage interface.
 [Get the package on npm](https://www.npmjs.com/package/@astra-spec/sdk){ .md-button .md-button--primary }
 [View the source](https://github.com/LightconeResearch/astra-typescript){ .md-button }
 
+The [Python report contract](reports.md), available from `@astra-spec/sdk/reports`,
+provides ASTRA 0.1 report types and decoders as the first part of the SDK 0.2
+migration. The project workflows below still implement ASTRA 0.0.14.
+
 ## Install
 
 The SDK requires Node.js 20 or newer.

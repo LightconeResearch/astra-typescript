@@ -22,6 +22,12 @@ The SDK deliberately exposes two top-level project workflows:
 See the [versioned SDK documentation](https://lightconeresearch.github.io/astra-typescript/)
 for focused integration guides and the complete API reference.
 
+The [`@astra-spec/sdk/reports` entry point](docs/reports.md) provides the
+Python-compatible report contract for ASTRA 0.1: generated types and runtime
+decoders for `ResolvedAnalysis`, `ValidationReport`, and `StatusReport`. It is
+the first part of the SDK 0.2 migration. The project validation and resolution
+workflows described below still implement ASTRA 0.0.14.
+
 ## Install
 
 ```bash

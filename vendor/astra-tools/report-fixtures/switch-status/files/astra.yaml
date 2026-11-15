@@ -1,0 +1,52 @@
+spec_version: "0.1.0"
+decisions:
+  route:
+    options: {a: {}, b: {}}
+  cold:
+    options: {a: {}, b: {}}
+outputs:
+  present:
+    type: data
+    format: txt
+    recipe: {command: "printf present > {output}"}
+  stale:
+    type: data
+    format: txt
+    recipe: {command: "printf stale > {output}"}
+  absent:
+    type: data
+    format: txt
+    recipe: {command: "printf absent > {output}"}
+  missing:
+    type: data
+    format: txt
+    recipe: {command: "printf missing > {output}"}
+  chosen:
+    switch: route
+    cases: {a: present, b: stale}
+  dormant:
+    switch: cold
+    cases: {a: present}
+  pipeline:
+    type: report
+    format: txt
+    inputs: [chosen]
+    recipe: {command: "cat {inputs.chosen} > {output}"}
+  summary:
+    type: table
+    format: txt
+    inputs: [pipeline#baseline]
+    recipe: {command: "cat {inputs.pipeline#baseline} > {output}"}
+universes:
+  baseline:
+    decisions: {route: a, cold: b}
+  alternate:
+    derived_from: baseline
+    decisions: {route: b}
+findings:
+  branches:
+    claim: A switch can cite several results, a pinned result, or none.
+    evidence:
+      - artifact: chosen
+      - artifact: chosen#baseline
+      - artifact: dormant

@@ -1,0 +1,16 @@
+spec_version: "0.1.0"
+analyses:
+  parent: {path: ..}
+decisions:
+  method:
+    options: {a: {}, b: {}}
+outputs:
+  fit:
+    type: metric
+    format: json
+    inputs: [parent.shared]
+    decisions: [method]
+    recipe: {command: "fit {inputs.parent.shared} {decisions.method} > {output}"}
+universes:
+  local:
+    decisions: {method: a}

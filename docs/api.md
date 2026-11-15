@@ -3,6 +3,11 @@
 This is the complete export inventory. Everything is imported from
 `@astra-spec/sdk` unless a different entry point is shown.
 
+The separate [`@astra-spec/sdk/reports` entry point](reports.md) exposes the
+Python-compatible ASTRA 0.1 report contract. Its `Analysis`, `Input`, and other
+types describe resolved report data; the root entry point's types below describe
+the existing ASTRA 0.0.14 workflows.
+
 ## Project workflows and errors
 
 | Export | Kind | Purpose |

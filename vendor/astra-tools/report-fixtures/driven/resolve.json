@@ -1,0 +1,286 @@
+{
+  "spec_version": "0.1.0",
+  "head": "4f9d748efd6d6620a78fb2006eedde5a06895fd3",
+  "analyses": [
+    {
+      "key": "",
+      "folder": ".",
+      "label": "Driven analysis",
+      "tags": [],
+      "declares": {
+        "stage": "stage"
+      },
+      "inputs": [
+        {
+          "ref": "inputs.seed",
+          "path": "data/seed.txt",
+          "tags": []
+        }
+      ],
+      "decisions": [],
+      "outputs": [
+        {
+          "ref": "outputs.shared",
+          "type": "data",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        },
+        {
+          "ref": "outputs.comparison",
+          "type": "report",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        }
+      ],
+      "prior_insights": [],
+      "findings": [
+        {
+          "ref": "findings.fit",
+          "kind": "finding",
+          "claim": "The driver compares two methods and the stage's own result.",
+          "evidence": [
+            {
+              "cites": [
+                "stage.fit#baseline",
+                "stage.fit#alternate"
+              ],
+              "artifact": "stage.fit"
+            },
+            {
+              "cites": [
+                "stage:fit#local"
+              ],
+              "artifact": "stage.fit#local"
+            }
+          ],
+          "tags": []
+        }
+      ],
+      "universes": [
+        {
+          "ref": "universes.baseline",
+          "selection": {
+            "stage.decisions.method": "a"
+          },
+          "tags": []
+        },
+        {
+          "ref": "universes.alternate",
+          "selection": {
+            "stage.decisions.method": "b"
+          },
+          "tags": []
+        }
+      ]
+    },
+    {
+      "key": "stage",
+      "folder": "stage",
+      "tags": [],
+      "declares": {
+        "parent": ""
+      },
+      "inputs": [],
+      "decisions": [
+        {
+          "ref": "stage.decisions.method",
+          "options": [
+            {
+              "id": "a",
+              "tags": [],
+              "insights": []
+            },
+            {
+              "id": "b",
+              "tags": [],
+              "insights": []
+            }
+          ],
+          "tags": []
+        }
+      ],
+      "outputs": [
+        {
+          "ref": "stage.outputs.fit",
+          "type": "metric",
+          "format": "json",
+          "tags": [],
+          "decisions": [
+            "stage.decisions.method"
+          ]
+        }
+      ],
+      "prior_insights": [],
+      "findings": [],
+      "universes": [
+        {
+          "ref": "stage.universes.local",
+          "selection": {
+            "stage.decisions.method": "a"
+          },
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "id": "shared",
+      "output": "outputs.shared",
+      "places": [
+        {
+          "address": "shared",
+          "record_path": ".astra/records/shared.json",
+          "file_path": "results/shared.txt"
+        }
+      ],
+      "inputs": [
+        {
+          "entry": "seed",
+          "input": "inputs.seed"
+        }
+      ],
+      "command": "cat data/seed.txt > results/shared.txt"
+    },
+    {
+      "id": "stage.fit#baseline",
+      "output": "stage.outputs.fit",
+      "places": [
+        {
+          "address": "stage.fit#baseline",
+          "record_path": ".astra/records/baseline/stage.fit.json",
+          "file_path": "results/baseline/stage.fit.json"
+        }
+      ],
+      "universe": "universes.baseline",
+      "inputs": [
+        {
+          "entry": "parent.shared",
+          "result": "shared"
+        }
+      ],
+      "command": "fit ../results/shared.txt a > ../results/baseline/stage.fit.json"
+    },
+    {
+      "id": "stage:fit#local",
+      "output": "stage.outputs.fit",
+      "places": [
+        {
+          "address": "fit#local",
+          "record_path": "stage/.astra/records/local/fit.json",
+          "file_path": "stage/results/local/fit.json"
+        }
+      ],
+      "universe": "stage.universes.local",
+      "inputs": [
+        {
+          "entry": "parent.shared",
+          "result": "shared"
+        }
+      ],
+      "command": "fit ../results/shared.txt a > results/local/fit.json"
+    },
+    {
+      "id": "comparison#baseline",
+      "output": "outputs.comparison",
+      "places": [
+        {
+          "address": "comparison#baseline",
+          "record_path": ".astra/records/baseline/comparison.json",
+          "file_path": "results/baseline/comparison.txt"
+        }
+      ],
+      "universe": "universes.baseline",
+      "inputs": [
+        {
+          "entry": "shared",
+          "result": "shared"
+        },
+        {
+          "entry": "stage.fit",
+          "result": "stage.fit#baseline"
+        },
+        {
+          "entry": "stage.fit#local",
+          "result": "stage:fit#local"
+        }
+      ],
+      "command": "cat results/shared.txt results/baseline/stage.fit.json stage/results/local/fit.json > results/baseline/comparison.txt"
+    },
+    {
+      "id": "stage.fit#alternate",
+      "output": "stage.outputs.fit",
+      "places": [
+        {
+          "address": "stage.fit#alternate",
+          "record_path": ".astra/records/alternate/stage.fit.json",
+          "file_path": "results/alternate/stage.fit.json"
+        }
+      ],
+      "universe": "universes.alternate",
+      "inputs": [
+        {
+          "entry": "parent.shared",
+          "result": "shared"
+        }
+      ],
+      "command": "fit ../results/shared.txt b > ../results/alternate/stage.fit.json"
+    },
+    {
+      "id": "comparison#alternate",
+      "output": "outputs.comparison",
+      "places": [
+        {
+          "address": "comparison#alternate",
+          "record_path": ".astra/records/alternate/comparison.json",
+          "file_path": "results/alternate/comparison.txt"
+        }
+      ],
+      "universe": "universes.alternate",
+      "inputs": [
+        {
+          "entry": "shared",
+          "result": "shared"
+        },
+        {
+          "entry": "stage.fit",
+          "result": "stage.fit#alternate"
+        },
+        {
+          "entry": "stage.fit#local",
+          "result": "stage:fit#local"
+        }
+      ],
+      "command": "cat results/shared.txt results/alternate/stage.fit.json stage/results/local/fit.json > results/alternate/comparison.txt"
+    }
+  ],
+  "notes": [
+    {
+      "code": "FALLBACK_PIN",
+      "level": "note",
+      "message": "`stage.fit#local` names `local` of `stage` only because this file has no universe `local`: adding one, or an import of that id, would change what it names",
+      "location": {
+        "file": "astra.yaml",
+        "pointer": "/outputs/comparison/inputs/2",
+        "line": 16,
+        "column": 33
+      },
+      "related": []
+    },
+    {
+      "code": "FALLBACK_PIN",
+      "level": "note",
+      "message": "`stage.fit#local` names `local` of `stage` only because this file has no universe `local`: adding one, or an import of that id, would change what it names",
+      "location": {
+        "file": "astra.yaml",
+        "pointer": "/findings/fit/evidence/1/artifact",
+        "line": 29,
+        "column": 19
+      },
+      "related": []
+    }
+  ],
+  "schema_version": "astra-tools.resolved-analysis.v1"
+}

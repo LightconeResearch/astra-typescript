@@ -19,6 +19,11 @@
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js",
       "default": "./dist/node.js"
+    },
+    "./reports": {
+      "types": "./dist/reports/index.d.ts",
+      "import": "./dist/reports/index.js",
+      "default": "./dist/reports/index.js"
     }
   },
   "files": [
@@ -26,8 +31,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run clean && npm run build",
+    "prepack": "npm run reports:check && npm run clean && npm run build",
     "schema:sync": "node scripts/sync-bundled-schema.mjs",
+    "reports:generate": "node scripts/generate-report-contract.mjs",
+    "reports:check": "node scripts/generate-report-contract.mjs --check",
+    "reports:sync": "node scripts/generate-report-contract.mjs --sync",
+    "test:reports:package": "npm run build && node scripts/check-report-package.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

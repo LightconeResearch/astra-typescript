@@ -1,0 +1,7 @@
+{
+  "root": "astra.yaml",
+  "valid": true,
+  "diagnostics": [],
+  "unchecked": [],
+  "schema_version": "astra-tools.validation-report.v1"
+}

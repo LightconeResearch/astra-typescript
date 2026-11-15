@@ -1,0 +1,165 @@
+{
+  "head": "4f9d748efd6d6620a78fb2006eedde5a06895fd3",
+  "statuses": {
+    "shared": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/shared.json: build `shared`, and record it there",
+          "location": {
+            "file": ".astra/records/shared.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "stage.fit#baseline": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/baseline/stage.fit.json: build `stage.fit#baseline`, and record it there",
+          "location": {
+            "file": ".astra/records/baseline/stage.fit.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "stage:fit#local": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at stage/.astra/records/local/fit.json: build `fit#local`, and record it there",
+          "location": {
+            "file": "stage/.astra/records/local/fit.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "comparison#baseline": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/baseline/comparison.json: build `comparison#baseline`, and record it there",
+          "location": {
+            "file": ".astra/records/baseline/comparison.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "stage.fit#alternate": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/alternate/stage.fit.json: build `stage.fit#alternate`, and record it there",
+          "location": {
+            "file": ".astra/records/alternate/stage.fit.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "comparison#alternate": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/alternate/comparison.json: build `comparison#alternate`, and record it there",
+          "location": {
+            "file": ".astra/records/alternate/comparison.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    }
+  },
+  "evidence": [
+    {
+      "insight": "findings.fit",
+      "index": 0,
+      "state": "missing",
+      "why": [
+        {
+          "code": "STALE_EVIDENCE",
+          "level": "error",
+          "message": "the evidence cites `stage.fit#baseline`, `stage.fit#alternate`: one of them is missing",
+          "location": {
+            "file": "astra.yaml",
+            "pointer": "/findings/fit/evidence/0/artifact",
+            "line": 28,
+            "column": 19
+          },
+          "related": []
+        }
+      ]
+    },
+    {
+      "insight": "findings.fit",
+      "index": 1,
+      "state": "missing",
+      "why": [
+        {
+          "code": "STALE_EVIDENCE",
+          "level": "error",
+          "message": "the evidence cites `stage:fit#local`: it is missing",
+          "location": {
+            "file": "astra.yaml",
+            "pointer": "/findings/fit/evidence/1/artifact",
+            "line": 29,
+            "column": 19
+          },
+          "related": []
+        }
+      ]
+    }
+  ],
+  "inputs": {
+    "inputs.seed": {
+      "state": "present"
+    }
+  },
+  "schema_version": "astra-tools.status-report.v1"
+}

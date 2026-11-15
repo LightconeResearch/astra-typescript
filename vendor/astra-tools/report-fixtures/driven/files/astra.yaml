@@ -1,0 +1,29 @@
+spec_version: "0.1.0"
+label: Driven analysis
+analyses:
+  stage: {path: stage}
+inputs:
+  seed: {path: data/seed.txt}
+outputs:
+  shared:
+    type: data
+    format: txt
+    inputs: [seed]
+    recipe: {command: "cat {inputs.seed} > {output}"}
+  comparison:
+    type: report
+    format: txt
+    inputs: [shared, stage.fit, stage.fit#local]
+    recipe: {command: "cat {inputs} > {output}"}
+universes:
+  baseline:
+    decisions: {stage.method: a}
+  alternate:
+    derived_from: baseline
+    decisions: {stage.method: b}
+findings:
+  fit:
+    claim: The driver compares two methods and the stage's own result.
+    evidence:
+      - artifact: stage.fit
+      - artifact: stage.fit#local

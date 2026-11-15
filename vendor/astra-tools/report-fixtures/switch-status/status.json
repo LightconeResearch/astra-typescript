@@ -1,0 +1,240 @@
+{
+  "head": "09583c7a8d60fd11025ea030b7097051dd13b84b",
+  "statuses": {
+    "absent": {
+      "state": "unchanged",
+      "bytes": {
+        "state": "absent"
+      },
+      "record": {
+        "address": "absent",
+        "content_hash": "sha256:73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac",
+        "size": 2,
+        "generated_by": {
+          "commit": "e2bcdd189785b31d4dfa86fb4ea3785c33490e5d",
+          "environment": {
+            "iri": "urn:example:fixture"
+          },
+          "runner": {
+            "id": "report-fixture",
+            "version": "1"
+          },
+          "inputs": []
+        },
+        "spec_version": "0.1.0"
+      },
+      "why": [
+        {
+          "code": "ABSENT_RESULT",
+          "level": "warning",
+          "message": "no file is at results/absent.txt, the result's default place",
+          "location": {
+            "file": "results/absent.txt",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "missing": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/missing.json: build `missing`, and record it there",
+          "location": {
+            "file": ".astra/records/missing.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "present": {
+      "state": "unchanged",
+      "bytes": {
+        "state": "present"
+      },
+      "record": {
+        "address": "present",
+        "content_hash": "sha256:73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac",
+        "size": 2,
+        "generated_by": {
+          "commit": "e2bcdd189785b31d4dfa86fb4ea3785c33490e5d",
+          "environment": {
+            "iri": "urn:example:fixture"
+          },
+          "runner": {
+            "id": "report-fixture",
+            "version": "1"
+          },
+          "inputs": []
+        },
+        "spec_version": "0.1.0"
+      },
+      "why": [],
+      "stale_inputs": []
+    },
+    "pipeline#baseline": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/baseline/pipeline.json: build `pipeline#baseline`, and record it there",
+          "location": {
+            "file": ".astra/records/baseline/pipeline.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "stale": {
+      "state": "stale",
+      "bytes": {
+        "state": "present"
+      },
+      "record": {
+        "address": "stale",
+        "content_hash": "sha256:73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac",
+        "size": 2,
+        "generated_by": {
+          "commit": "e2bcdd189785b31d4dfa86fb4ea3785c33490e5d",
+          "environment": {
+            "iri": "urn:example:fixture"
+          },
+          "runner": {
+            "id": "report-fixture",
+            "version": "1"
+          },
+          "inputs": []
+        },
+        "spec_version": "0.1.0"
+      },
+      "why": [
+        {
+          "code": "STALE_RESULT",
+          "level": "error",
+          "message": "its recipe's command isn't the one it had at e2bcdd189785",
+          "location": {
+            "file": ".astra/records/stale.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    },
+    "pipeline#alternate": {
+      "state": "stale",
+      "bytes": {
+        "state": "present"
+      },
+      "record": {
+        "address": "pipeline#alternate",
+        "content_hash": "sha256:73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac",
+        "size": 2,
+        "generated_by": {
+          "commit": "e2bcdd189785b31d4dfa86fb4ea3785c33490e5d",
+          "environment": {
+            "iri": "urn:example:fixture"
+          },
+          "runner": {
+            "id": "report-fixture",
+            "version": "1"
+          },
+          "inputs": [
+            {
+              "entry": "chosen",
+              "content_hash": "sha256:73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac",
+              "size": 2
+            }
+          ]
+        },
+        "spec_version": "0.1.0"
+      },
+      "why": [],
+      "stale_inputs": [
+        "chosen"
+      ]
+    },
+    "summary": {
+      "state": "missing",
+      "bytes": {
+        "state": "absent"
+      },
+      "why": [
+        {
+          "code": "MISSING_RECORD",
+          "level": "error",
+          "message": "no record is at .astra/records/summary.json: build `summary`, and record it there",
+          "location": {
+            "file": ".astra/records/summary.json",
+            "pointer": ""
+          },
+          "related": []
+        }
+      ],
+      "stale_inputs": []
+    }
+  },
+  "evidence": [
+    {
+      "insight": "findings.branches",
+      "index": 0,
+      "state": "stale",
+      "why": [
+        {
+          "code": "STALE_EVIDENCE",
+          "level": "error",
+          "message": "the evidence cites `present`, `stale`: one of them is stale",
+          "location": {
+            "file": "astra.yaml",
+            "pointer": "/findings/branches/evidence/0/artifact",
+            "line": 50,
+            "column": 19
+          },
+          "related": []
+        }
+      ]
+    },
+    {
+      "insight": "findings.branches",
+      "index": 1,
+      "state": "unchanged",
+      "why": []
+    },
+    {
+      "insight": "findings.branches",
+      "index": 2,
+      "state": "missing",
+      "why": [
+        {
+          "code": "STALE_EVIDENCE",
+          "level": "error",
+          "message": "the evidence cites no result: none is planned for it in a universe of the root",
+          "location": {
+            "file": "astra.yaml",
+            "pointer": "/findings/branches/evidence/2/artifact",
+            "line": 52,
+            "column": 19
+          },
+          "related": []
+        }
+      ]
+    }
+  ],
+  "inputs": {},
+  "schema_version": "astra-tools.status-report.v1"
+}

@@ -1,0 +1,29 @@
+{
+  "format": "astra-report-fixtures.v1",
+  "contract_revision": "v1",
+  "oracle": {
+    "repository": "https://github.com/astra-project/astra-tools",
+    "commit": "9bbf26e10d013632b3ecf14325ab224372d455e0"
+  },
+  "specification": {
+    "repository": "https://github.com/astra-project/astra-spec",
+    "release": "0.1.0rc1",
+    "tag": "v0.1.0rc1",
+    "commit": "5861947f4023e10920368a565f25ff397f870498",
+    "document_version": "0.1.0"
+  },
+  "git_environment": {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "core.autocrlf",
+    "GIT_CONFIG_VALUE_0": "false",
+    "GIT_AUTHOR_NAME": "ASTRA report fixtures",
+    "GIT_COMMITTER_NAME": "ASTRA report fixtures",
+    "GIT_AUTHOR_EMAIL": "fixtures@astra.invalid",
+    "GIT_COMMITTER_EMAIL": "fixtures@astra.invalid",
+    "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
+    "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"
+  },
+  "cases": ["driven", "switch-status"]
+}

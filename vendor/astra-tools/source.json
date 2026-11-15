@@ -1,0 +1,70 @@
+{
+  "repository": "https://github.com/astra-project/astra-tools",
+  "revision": "5504a2d2a212921c9009e94c0b4b5fddca3ff9d4",
+  "files": {
+    "LICENSE": {
+      "path": "LICENSE",
+      "sha256": "160a0c12a2a22192d01a546c4bcfa255c5294765f4a186155d0b960cb517aa62"
+    },
+    "reports.schema.json": {
+      "path": "src/astra/model/reports.schema.json",
+      "sha256": "93ac3e7758ea153bd28b4ae667e7fc223d8299d64b986567bc6890bb7edecd43"
+    },
+    "report-fixtures/README.md": {
+      "path": "tests/report-fixtures/README.md",
+      "sha256": "c20040a8724063a795f7578df931bdfbf7574365debcd800eed7133244e1e649"
+    },
+    "report-fixtures/driven/files/astra.yaml": {
+      "path": "tests/report-fixtures/driven/files/astra.yaml",
+      "sha256": "a001223633113966eda35f1f1cc1303fa964eec31d994e8e8f66e54bd9d0d42a"
+    },
+    "report-fixtures/driven/files/data/seed.txt": {
+      "path": "tests/report-fixtures/driven/files/data/seed.txt",
+      "sha256": "4a6689419b00b11700c9b6246bcfa8936c8f5e1e824db3a7e57030e2d1c1a684"
+    },
+    "report-fixtures/driven/files/stage/astra.yaml": {
+      "path": "tests/report-fixtures/driven/files/stage/astra.yaml",
+      "sha256": "39c1a9afb562fab362334ffc78e2081ae2e2174679c092dea100646c2bcf4e29"
+    },
+    "report-fixtures/driven/resolve.json": {
+      "path": "tests/report-fixtures/driven/resolve.json",
+      "sha256": "ecf47b89c1e125fc3452d361420d44d3ced3a049f71d565787285139ca4b57ee"
+    },
+    "report-fixtures/driven/setup.sh": {
+      "path": "tests/report-fixtures/driven/setup.sh",
+      "sha256": "444c99ad9e8f721b50b5e30194307b3bd0b261ed1c2ae75fd62b97489147cca9"
+    },
+    "report-fixtures/driven/status.json": {
+      "path": "tests/report-fixtures/driven/status.json",
+      "sha256": "2294e5ac8e66560cb7610f9942069bc1f58347daf408c1974ec71ee5f329eed6"
+    },
+    "report-fixtures/driven/validate.json": {
+      "path": "tests/report-fixtures/driven/validate.json",
+      "sha256": "65494a70b2833cc41903c717d31edcbd76b645e004814bebe719c9387850e021"
+    },
+    "report-fixtures/manifest.json": {
+      "path": "tests/report-fixtures/manifest.json",
+      "sha256": "4e61a1a621629464d07e39dfe2aa4e3e7bffebee3a75f3bba710bf9d51d743bd"
+    },
+    "report-fixtures/switch-status/files/astra.yaml": {
+      "path": "tests/report-fixtures/switch-status/files/astra.yaml",
+      "sha256": "2984fa0bef4ae2573882bcd33effda66ee2e2e0bc295b89ee350c93e10e9ec28"
+    },
+    "report-fixtures/switch-status/resolve.json": {
+      "path": "tests/report-fixtures/switch-status/resolve.json",
+      "sha256": "28de9617f9e48082c3aadce2f32830e5409fbf5f24828e8cfb3916071bde0860"
+    },
+    "report-fixtures/switch-status/setup.sh": {
+      "path": "tests/report-fixtures/switch-status/setup.sh",
+      "sha256": "3a9f936963ee13d1c49cb9981f281bb352f4e571086139962351b95ed147a72f"
+    },
+    "report-fixtures/switch-status/status.json": {
+      "path": "tests/report-fixtures/switch-status/status.json",
+      "sha256": "c3d29b8b0e124d78e68815c22be45df917f013974398f269ffbebda521bf7487"
+    },
+    "report-fixtures/switch-status/validate.json": {
+      "path": "tests/report-fixtures/switch-status/validate.json",
+      "sha256": "65494a70b2833cc41903c717d31edcbd76b645e004814bebe719c9387850e021"
+    }
+  }
+}

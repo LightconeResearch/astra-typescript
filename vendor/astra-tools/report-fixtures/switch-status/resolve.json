@@ -1,0 +1,262 @@
+{
+  "spec_version": "0.1.0",
+  "head": "09583c7a8d60fd11025ea030b7097051dd13b84b",
+  "analyses": [
+    {
+      "key": "",
+      "folder": ".",
+      "tags": [],
+      "declares": {},
+      "inputs": [],
+      "decisions": [
+        {
+          "ref": "decisions.route",
+          "options": [
+            {
+              "id": "a",
+              "tags": [],
+              "insights": []
+            },
+            {
+              "id": "b",
+              "tags": [],
+              "insights": []
+            }
+          ],
+          "tags": []
+        },
+        {
+          "ref": "decisions.cold",
+          "options": [
+            {
+              "id": "a",
+              "tags": [],
+              "insights": []
+            },
+            {
+              "id": "b",
+              "tags": [],
+              "insights": []
+            }
+          ],
+          "tags": []
+        }
+      ],
+      "outputs": [
+        {
+          "ref": "outputs.present",
+          "type": "data",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        },
+        {
+          "ref": "outputs.stale",
+          "type": "data",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        },
+        {
+          "ref": "outputs.absent",
+          "type": "data",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        },
+        {
+          "ref": "outputs.missing",
+          "type": "data",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        },
+        {
+          "ref": "outputs.pipeline",
+          "type": "report",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        },
+        {
+          "ref": "outputs.summary",
+          "type": "table",
+          "format": "txt",
+          "tags": [],
+          "decisions": []
+        }
+      ],
+      "prior_insights": [],
+      "findings": [
+        {
+          "ref": "findings.branches",
+          "kind": "finding",
+          "claim": "A switch can cite several results, a pinned result, or none.",
+          "evidence": [
+            {
+              "cites": [
+                "present",
+                "stale"
+              ],
+              "artifact": "chosen"
+            },
+            {
+              "cites": [
+                "present"
+              ],
+              "artifact": "chosen#baseline"
+            },
+            {
+              "cites": [],
+              "artifact": "dormant"
+            }
+          ],
+          "tags": []
+        }
+      ],
+      "universes": [
+        {
+          "ref": "universes.baseline",
+          "selection": {
+            "decisions.cold": "b",
+            "decisions.route": "a"
+          },
+          "tags": []
+        },
+        {
+          "ref": "universes.alternate",
+          "selection": {
+            "decisions.cold": "b",
+            "decisions.route": "b"
+          },
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "id": "absent",
+      "output": "outputs.absent",
+      "places": [
+        {
+          "address": "absent",
+          "record_path": ".astra/records/absent.json",
+          "file_path": "results/absent.txt"
+        }
+      ],
+      "inputs": [],
+      "command": "printf absent > results/absent.txt"
+    },
+    {
+      "id": "missing",
+      "output": "outputs.missing",
+      "places": [
+        {
+          "address": "missing",
+          "record_path": ".astra/records/missing.json",
+          "file_path": "results/missing.txt"
+        }
+      ],
+      "inputs": [],
+      "command": "printf missing > results/missing.txt"
+    },
+    {
+      "id": "present",
+      "output": "outputs.present",
+      "places": [
+        {
+          "address": "present",
+          "record_path": ".astra/records/present.json",
+          "file_path": "results/present.txt"
+        }
+      ],
+      "inputs": [],
+      "command": "printf present > results/present.txt"
+    },
+    {
+      "id": "pipeline#baseline",
+      "output": "outputs.pipeline",
+      "places": [
+        {
+          "address": "pipeline#baseline",
+          "record_path": ".astra/records/baseline/pipeline.json",
+          "file_path": "results/baseline/pipeline.txt"
+        }
+      ],
+      "universe": "universes.baseline",
+      "inputs": [
+        {
+          "entry": "chosen",
+          "result": "present"
+        }
+      ],
+      "command": "cat results/present.txt > results/baseline/pipeline.txt"
+    },
+    {
+      "id": "stale",
+      "output": "outputs.stale",
+      "places": [
+        {
+          "address": "stale",
+          "record_path": ".astra/records/stale.json",
+          "file_path": "results/stale.txt"
+        }
+      ],
+      "inputs": [],
+      "command": "printf revised > results/stale.txt"
+    },
+    {
+      "id": "pipeline#alternate",
+      "output": "outputs.pipeline",
+      "places": [
+        {
+          "address": "pipeline#alternate",
+          "record_path": ".astra/records/alternate/pipeline.json",
+          "file_path": "results/alternate/pipeline.txt"
+        }
+      ],
+      "universe": "universes.alternate",
+      "inputs": [
+        {
+          "entry": "chosen",
+          "result": "stale"
+        }
+      ],
+      "command": "cat results/stale.txt > results/alternate/pipeline.txt"
+    },
+    {
+      "id": "summary",
+      "output": "outputs.summary",
+      "places": [
+        {
+          "address": "summary",
+          "record_path": ".astra/records/summary.json",
+          "file_path": "results/summary.txt"
+        }
+      ],
+      "inputs": [
+        {
+          "entry": "pipeline#baseline",
+          "result": "pipeline#baseline"
+        }
+      ],
+      "command": "cat results/baseline/pipeline.txt > results/summary.txt"
+    }
+  ],
+  "notes": [
+    {
+      "code": "NOT_BUILT",
+      "level": "note",
+      "message": "`dormant` isn't built in `baseline` and `alternate`: it has no case there for `b`, the option its decision selects",
+      "location": {
+        "file": "astra.yaml",
+        "pointer": "/outputs/dormant",
+        "line": 28,
+        "column": 5
+      },
+      "related": []
+    }
+  ],
+  "schema_version": "astra-tools.resolved-analysis.v1"
+}

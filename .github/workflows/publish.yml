@@ -24,10 +24,23 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # npm normalizes a PEP 440 tag such as v0.2.0rc1 to 0.2.0-rc1, so the
+      # prerelease check reads the normalized version, not the tag name.
       - name: Set version from release tag
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
-      - run: npm publish --tag "${{ contains(github.ref_name, '-') && 'next' || 'latest' }}"
+        id: version
+        run: |
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+          version="$(node -p "require('./package.json').version")"
+          case "$version" in
+            *-*) dist_tag=next ;;
+            *) dist_tag=latest ;;
+          esac
+          echo "Publishing $version under the $dist_tag dist-tag"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+      - run: npm publish --tag "${{ steps.version.outputs.dist_tag }}"
+      # A prerelease must not move main's version.
       - name: Commit updated version to main
+        if: steps.version.outputs.dist_tag == 'latest'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
